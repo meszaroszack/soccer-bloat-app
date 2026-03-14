@@ -256,7 +256,6 @@ function BotPanel() {
     mutationFn: () => apiRequest("DELETE", "/api/credentials").then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/status"] });
-      // Also turn off bot
       saveSettings.mutate({ botEnabled: false });
       toast({ title: "Disconnected from Kalshi" });
     },
@@ -733,56 +732,97 @@ function TradeHistory({ signals }: { signals: Signal[] }) {
 function ScoreboardRow({ market }: { market: ScoredMarket }) {
   const cfg = TIER_CONFIG[market.tier];
   const favPct = market.favoriteProb != null ? `${Math.round(market.favoriteProb * 100)}%` : "—";
-  // Prices are decimal probabilities (0-1)
+  // Prices are decimal probabilities (0-1); display as cents
   const noPr = market.drawPrice != null ? `${Math.round(market.drawPrice * 100)}¢` : "—";
-  const yesPr = market.yesPrice != null ? `${Math.round(market.yesPrice * 100)}¢` : "—";
+  const min = market.minuteEstimate != null ? `${market.minuteEstimate}'` : "—";
+  const displayTitle = market.title.replace(/^(Will |Who wins |Match winner:\s*)/i, "");
 
   return (
-    <div className={`flex items-center gap-3 p-3 rounded-lg border ${cfg.border} ${cfg.bg}`}>
+    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${cfg.border} ${cfg.bg}`}
+      data-testid={`scoreboard-row-${market.ticker}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium truncate">{market.title}</p>
-        <p className="text-[10px] text-muted-foreground">{market.ticker}</p>
+        <p className="text-sm font-medium truncate">{displayTitle}</p>
+        <p className="text-xs text-muted-foreground font-mono">{market.ticker}</p>
       </div>
       <div className="flex items-center gap-3 text-xs shrink-0">
-        <span className="text-orange-400 font-mono">{favPct}</span>
-        <span className="text-green-400 font-mono">{noPr}</span>
-        <span className="text-blue-400 font-mono">{yesPr}</span>
-        <Badge className={`${cfg.badge} text-[10px] h-4 px-1.5 border`}>{cfg.badgeText}</Badge>
+        <div className="text-right">
+          <p className="text-muted-foreground">Fav</p>
+          <p className="font-bold text-orange-400">{favPct}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-muted-foreground">NO</p>
+          <p className="font-bold text-green-400">{noPr}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-muted-foreground">Min</p>
+          <p className="font-bold text-purple-400">{min}</p>
+        </div>
+        <Badge className={`text-[10px] px-1.5 border ${cfg.badge}`}>{cfg.badgeText}</Badge>
       </div>
     </div>
   );
 }
 
 function LiveScoreboard() {
-  const { data: markets, isLoading } = useQuery<ScoredMarket[]>({
+  const [showCold, setShowCold] = useState(false);
+
+  const { data, isLoading, error } = useQuery<{ markets: ScoredMarket[]; fetchedAt: string }>({
     queryKey: ["/api/markets"],
     refetchInterval: 30000,
   });
 
-  if (isLoading) return <div className="h-24 rounded-xl bg-muted animate-pulse mb-5" />;
-  if (!markets?.length) return null;
+  if (isLoading) return (
+    <div className="space-y-2">
+      {[1, 2, 3].map(i => (
+        <div key={i} className="h-14 rounded-lg bg-muted/30 animate-pulse" />
+      ))}
+    </div>
+  );
+
+  if (error) return (
+    <div className="text-center py-8 text-sm text-red-400">
+      Failed to load markets. Check your connection.
+    </div>
+  );
+
+  const markets = data?.markets ?? [];
+  const hot = markets.filter(m => m.tier !== "cold");
+  const cold = markets.filter(m => m.tier === "cold");
+
+  if (markets.length === 0) return (
+    <div className="text-center py-12 text-sm text-muted-foreground">
+      No live soccer markets found on Kalshi right now.
+    </div>
+  );
 
   return (
-    <div className="mb-5">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Live Markets</h2>
-        <span className="text-xs text-muted-foreground">{markets.length} tracked</span>
-      </div>
-      <div className="space-y-1.5">
-        {markets.slice(0, 8).map(m => <ScoreboardRow key={m.ticker} market={m} />)}
-        {markets.length > 8 && (
-          <p className="text-xs text-muted-foreground text-center pt-1">+{markets.length - 8} more markets</p>
-        )}
-      </div>
+    <div className="space-y-2">
+      {hot.map(m => <ScoreboardRow key={m.ticker} market={m} />)}
+      {cold.length > 0 && (
+        <>
+          <button
+            className="w-full text-xs text-muted-foreground hover:text-foreground py-1 flex items-center justify-center gap-1"
+            onClick={() => setShowCold(v => !v)}
+          >
+            {showCold ? "▲ Hide" : "▼ Show"} {cold.length} cold market{cold.length !== 1 ? "s" : ""}
+          </button>
+          {showCold && cold.map(m => <ScoreboardRow key={m.ticker} market={m} />)}
+        </>
+      )}
+      {data?.fetchedAt && (
+        <p className="text-xs text-muted-foreground text-right pt-1">
+          Updated {new Date(data.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+        </p>
+      )}
     </div>
   );
 }
 
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
-export default function Dashboard() {
-  const { data: signals = [], isLoading } = useQuery<Signal[]>({
+function Dashboard() {
+  const { data: signals = [] } = useQuery<Signal[]>({
     queryKey: ["/api/signals"],
     refetchInterval: 10000,
   });
@@ -790,43 +830,45 @@ export default function Dashboard() {
   const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const { data: status } = useQuery<ScanStatus>({ queryKey: ["/api/status"], refetchInterval: 5000 });
 
-  const { toast } = useToast();
+  const isConnected = status?.credentialsLoaded ?? false;
 
   const manualScan = useMutation({
     mutationFn: () => apiRequest("POST", "/api/scan").then(r => r.json()),
-    onSuccess: (data: { count: number }) => {
+    onSuccess: (data: { found: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
-      toast({
-        title: `Scan complete`,
-        description: `${data.count} market${data.count !== 1 ? "s" : ""} scanned`,
-      });
-    },
-    onError: (e: Error) => {
-      toast({ title: "Scan failed", description: e.message, variant: "destructive" });
+      toast({ title: `Scan complete — ${data.found} signal${data.found !== 1 ? "s" : ""} found` });
     },
   });
 
+  const { toast } = useToast();
   const activeSignals = signals.filter(s => s.status === "active");
   const skippedSignals = signals.filter(s => s.status === "skipped");
-  const isConnected = status?.credentialsLoaded ?? false;
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">⚽</span>
-            <h1 className="text-base font-bold">Bloat Scout</h1>
-            {status?.scanning && (
-              <Badge className="h-4 px-1.5 text-[10px] bg-blue-500/20 text-blue-300 border-0 animate-pulse">SCANNING</Badge>
-            )}
+      {/* Header */}
+      <header className="border-b bg-card sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-label="Bloat Scout">
+              <circle cx="14" cy="14" r="13" stroke="currentColor" strokeWidth="1.5" className="text-primary" />
+              <polygon points="14,6 10,10 10,15 14,18 18,15 18,10" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-primary" />
+              <circle cx="14" cy="12" r="2.5" className="fill-primary" />
+              <path d="M8 21 L20 21" stroke="currentColor" strokeWidth="1" className="text-muted-foreground" />
+              <path d="M8 21 L10 18 L13 20 L16 17 L20 21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-orange-400" />
+            </svg>
+            <span className="font-bold text-base tracking-tight">Bloat Scout</span>
           </div>
           <div className="flex items-center gap-2">
+            {status?.scanning && (
+              <span className="text-xs text-muted-foreground animate-pulse">Scanning...</span>
+            )}
             <Button
-              size="sm" variant="outline"
-              className="h-7 text-xs"
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs"
               onClick={() => manualScan.mutate()}
               disabled={manualScan.isPending}
               data-testid="button-scan"
@@ -837,108 +879,54 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-5">
+      <main className="max-w-6xl mx-auto px-4 py-6">
         <StatsBar />
 
-        {/* How it works */}
-        <div className="mb-5 p-3 rounded-lg bg-muted/30 border">
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            <span className="font-medium text-orange-400">Favorite Bloat:</span> Late-game (65'+) tied soccer matches where the pre-game favorite is still priced too high (60–78%).
-            Bet <span className="text-green-400 font-medium">NO</span> (draw/upset), <span className="text-blue-400 font-medium">YES</span> (underdog wins), or both.
-            {isConnected && status?.botEnabled
-              ? <span className="text-green-400 font-medium"> Bot is actively placing bets.</span>
-              : <span className="text-muted-foreground"> Connect API key + enable bot to auto-trade.</span>
-            }
-          </p>
-        </div>
-
-        {/* Live Scoreboard */}
-        <LiveScoreboard />
-
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Signals — left 2 cols */}
-          <div className="lg:col-span-2">
-            <Tabs defaultValue="active">
-              <TabsList className="mb-4">
-                <TabsTrigger value="active" data-testid="tab-active">
-                  Active
-                  {activeSignals.length > 0 && (
-                    <Badge className="ml-1.5 h-4 px-1.5 text-[10px] bg-orange-500 text-white">{activeSignals.length}</Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="history" data-testid="tab-history">Trades</TabsTrigger>
-                <TabsTrigger value="skipped" data-testid="tab-skipped">
-                  Skipped {skippedSignals.length > 0 && `(${skippedSignals.length})`}
-                </TabsTrigger>
+
+          {/* Left column: signals */}
+          <div className="lg:col-span-2 space-y-4">
+            <Tabs defaultValue="scoreboard">
+              <TabsList className="w-full">
+                <TabsTrigger value="scoreboard" className="flex-1">Live Markets</TabsTrigger>
+                <TabsTrigger value="signals" className="flex-1">Signals ({activeSignals.length})</TabsTrigger>
+                <TabsTrigger value="history" className="flex-1">History</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="active">
-                {isLoading ? (
-                  <div className="space-y-3">{[1, 2].map(i => <div key={i} className="h-48 rounded-xl bg-muted animate-pulse" />)}</div>
-                ) : activeSignals.length === 0 ? (
-                  <div className="text-center py-16 space-y-3">
-                    <div className="text-4xl">⚽</div>
-                    <p className="text-sm font-medium text-muted-foreground">No bloat signals detected</p>
-                    <p className="text-xs text-muted-foreground max-w-xs mx-auto">
-                      Watching Kalshi soccer markets. Signals appear when a late-game favorite is priced too high on a tied match.
-                    </p>
-                    <Button size="sm" variant="outline" onClick={() => manualScan.mutate()} disabled={manualScan.isPending} data-testid="button-scan-empty">
-                      Scan Now
-                    </Button>
+              <TabsContent value="scoreboard" className="mt-4">
+                <LiveScoreboard />
+              </TabsContent>
+
+              <TabsContent value="signals" className="mt-4 space-y-3">
+                {!settings ? null : activeSignals.length === 0 ? (
+                  <div className="text-center py-12">
+                    <p className="text-sm text-muted-foreground">No active signals yet.</p>
+                    <p className="text-xs text-muted-foreground mt-1">Use &quot;Scan Now&quot; or enable auto-scan to detect bloat opportunities.</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {activeSignals.map(s => (
-                      <SignalCard key={s.id} signal={s} settings={settings ?? {
-                        minMinute: 65, maxFavoriteProb: 0.78, minFavoriteProb: 0.60,
-                        scanEnabled: true, scanIntervalSec: 60, botEnabled: false,
-                        betMode: "no_only", betAmountDollars: 2, minBloatScore: 40,
-                      }} />
-                    ))}
-                  </div>
+                  activeSignals.map(s => <SignalCard key={s.id} signal={s} settings={settings} />)
                 )}
               </TabsContent>
 
-              <TabsContent value="history">
+              <TabsContent value="history" className="mt-4">
                 <TradeHistory signals={signals} />
-              </TabsContent>
-
-              <TabsContent value="skipped">
-                {skippedSignals.length === 0 ? (
-                  <div className="text-center py-12 text-sm text-muted-foreground">No skipped signals</div>
-                ) : (
-                  <div className="space-y-2">
-                    {skippedSignals.map(s => (
-                      <div key={s.id} className="p-3 rounded-lg border opacity-50 text-sm">
-                        <p className="font-medium truncate">{s.marketTitle}</p>
-                        <p className="text-xs text-muted-foreground">Bloat {s.bloatScore} · {fmtProb(s.favoriteProb)} fav · {fmtTime(s.detectedAt)}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </TabsContent>
             </Tabs>
           </div>
 
-          {/* Right panel */}
+          {/* Right column: bot controls */}
           <div className="space-y-4">
             {!isConnected ? (
-              <CredentialsPanel onConnected={() => {
-                queryClient.invalidateQueries({ queryKey: ["/api/status"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/balance"] });
-              }} />
-            ) : null}
-            <BotPanel />
+              <CredentialsPanel onConnected={() => {}} />
+            ) : (
+              <BotPanel />
+            )}
           </div>
         </div>
       </main>
-
-      <footer className="border-t py-4 mt-8">
-        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">Bloat Scout · Trade responsibly</p>
-          <PerplexityAttribution />
-        </div>
-      </footer>
+      <PerplexityAttribution />
     </div>
   );
 }
+
+export default Dashboard;
