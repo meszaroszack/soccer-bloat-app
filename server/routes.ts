@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage, setCreds, getCreds, clearCreds, hasCreds } from "./storage";
-import { scanForBloat, placeBloatBet, testCredentials, getBalance, type BetMode } from "./kalshi";
+import { scanForBloat, placeBloatBet, testCredentials, getBalance, fetchAllSoccerMarketsScored, type BetMode } from "./kalshi";
 
 // ─── Background scanner state ─────────────────────────────────────────────────
 
@@ -243,6 +243,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     await runScan();
     const signals = await storage.getSignals();
     res.json({ ok: true, found: lastScanCount, scannedAt: lastScanTime, signals });
+  });
+
+  app.get("/api/markets", async (_req, res) => {
+    try {
+      const markets = await fetchAllSoccerMarketsScored();
+      res.json({ markets, fetchedAt: new Date().toISOString() });
+    } catch (e) {
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   app.get("/api/status", async (_req, res) => {

@@ -118,6 +118,69 @@ export function calculateBloatScore(favoriteProb: number, minuteEstimate?: numbe
   return Math.min(100, Math.max(0, Math.round(base + minuteBonus)));
 }
 
+export type MarketTier = "bet" | "watch" | "early" | "cold";
+
+export interface ScoredMarket {
+  ticker: string;
+  eventTicker: string;
+  title: string;
+  favoriteProb: number | null;
+  drawPrice: number | null;
+  yesPrice: number | null;
+  minuteEstimate: number | null;
+  bloatScore: number;
+  tier: MarketTier;
+}
+
+/** All open soccer markets with tier classification */
+export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
+  const markets = await fetchSoccerMarkets();
+  const scored: ScoredMarket[] = [];
+
+  for (const m of markets) {
+    const yesProb = priceToProb(m.yes_bid);
+    const noProb = priceToProb(m.no_bid);
+    const minuteEstimate = estimateMinute(m.close_time ?? m.expiration_time);
+    const bloatScore = yesProb != null ? calculateBloatScore(yesProb, minuteEstimate) : 0;
+
+    // Tier logic:
+    // "bet"   — bloatScore >= 40, minute >= 65 → GO (green)
+    // "watch" — bloatScore >= 20, minute 50-65 → warming up (yellow)
+    // "early" — match detected but too early (minute < 50 or no minute) → (dim blue)
+    // "cold"  — no bloat / favorite prob out of range → (red/dim)
+    let tier: MarketTier;
+    if (bloatScore >= 40 && (minuteEstimate == null || minuteEstimate >= 65)) {
+      tier = "bet";
+    } else if (bloatScore >= 20) {
+      tier = "watch";
+    } else if (yesProb != null && minuteEstimate != null && minuteEstimate < 65) {
+      tier = "early";
+    } else {
+      tier = "cold";
+    }
+
+    scored.push({
+      ticker: m.ticker,
+      eventTicker: m.event_ticker,
+      title: m.title,
+      favoriteProb: yesProb,
+      drawPrice: m.no_bid ?? null,
+      yesPrice: m.yes_bid ?? null,
+      minuteEstimate: minuteEstimate ?? null,
+      bloatScore,
+      tier,
+    });
+  }
+
+  // Sort: bet first, then watch, early, cold; within tier by bloatScore desc
+  const tierOrder: Record<MarketTier, number> = { bet: 0, watch: 1, early: 2, cold: 3 };
+  return scored.sort((a, b) =>
+    tierOrder[a.tier] !== tierOrder[b.tier]
+      ? tierOrder[a.tier] - tierOrder[b.tier]
+      : b.bloatScore - a.bloatScore
+  );
+}
+
 export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
   try {
     const url = `${KALSHI_BASE}/markets?status=open&limit=200`;
