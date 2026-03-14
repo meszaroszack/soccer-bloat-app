@@ -82,16 +82,75 @@ export interface KalshiMarket {
   expiration_time?: string;
 }
 
-// Known Kalshi soccer series tickers — one per league
+// Known Kalshi soccer series tickers — comprehensive list covering all active leagues
+// Updated: includes all series confirmed to have open markets
 const SOCCER_SERIES = [
-  "KXEPLGAME",           // English Premier League
-  "KXBUNDESLIGAGAME",    // Bundesliga
-  "KXLALIGAGAME",        // La Liga
-  "KXSERIEAGAME",        // Serie A
-  "KXLIGAONEGAME",       // Ligue 1
-  "KXCHAMPIONSLEAGUEGAME", // UEFA Champions League
-  "KXEUROPALEAGUEGAME",  // UEFA Europa League
-  "KXMLSGAME",           // MLS
+  // ── Top 5 European Leagues ────────────────────────────────────────────────
+  "KXEPLGAME",              // English Premier League
+  "KXBUNDESLIGAGAME",       // Bundesliga (Germany 1st div)
+  "KXLALIGAGAME",           // La Liga (Spain 1st div)
+  "KXSERIEAGAME",           // Serie A (Italy 1st div)
+  "KXLIGAONEGAME",          // Ligue 1 (France 1st div)
+  // ── European 2nd Divisions ───────────────────────────────────────────────
+  "KXEFLCHAMPIONSHIPGAME",  // EFL Championship (England 2nd)
+  "KXBUNDESLIGA2GAME",      // Bundesliga 2 (Germany 2nd)
+  "KXLALIGA2GAME",          // LaLiga 2 (Spain 2nd)
+  "KXSERIEBGAME",           // Serie B (Italy 2nd)
+  // ── European Cups & Continental ─────────────────────────────────────────
+  "KXCHAMPIONSLEAGUEGAME",  // UEFA Champions League (legacy series)
+  "KXUCLGAME",              // UEFA Champions League (new series)
+  "KXEUROPALEAGUEGAME",     // UEFA Europa League (legacy series)
+  "KXUELGAME",              // UEFA Europa League (new series)
+  "KXUECLGAME",             // UEFA Europa Conference League
+  "KXFACUPGAME",            // FA Cup (England)
+  "KXEFLCUPGAME",           // EFL Cup (Carabao Cup)
+  "KXDFBPOKALGAME",         // DFB-Pokal (Germany Cup)
+  "KXCOPADELREYGAME",       // Copa del Rey (Spain Cup)
+  "KXCOPPAITALIAGAME",      // Coppa Italia
+  "KXCOUPEDEFRANCEGAME",    // Coupe de France
+  "KXKNVBCUPGAME",          // KNVB Cup (Netherlands)
+  "KXTACAPORTGAME",         // Taça de Portugal
+  // ── Other European Leagues ───────────────────────────────────────────────
+  "KXSCOTTISHPREMGAME",     // Scottish Premiership
+  "KXBELGIANPLGAME",        // Belgian Pro League
+  "KXDENSUPERLIGAGAME",     // Danish Superliga
+  "KXSUPERLIGGAME",         // Turkish Süper Lig
+  "KXSWISSLEAGUEGAME",      // Swiss Super League
+  "KXEKSTRAKLASAGAME",      // Polish Ekstraklasa
+  "KXCZEFLGAME",            // Czech First League
+  "KXHNLGAME",              // Croatian HNL
+  "KXSLGREECEGAME",         // Greek Super League
+  "KXLIGAPORTUGALGAME",     // Liga Portugal (Primeira Liga)
+  // ── Americas ─────────────────────────────────────────────────────────────
+  "KXMLSGAME",              // MLS (USA)
+  "KXNWSLGAME",             // NWSL (USA Women)
+  "KXUSLGAME",              // USL Championship
+  "KXLIGAMXGAME",           // Liga MX (Mexico)
+  "KXCONCACAFCCUPGAME",     // CONCACAF Champions Cup
+  "KXARGPREMDIVGAME",       // Argentine Primera División
+  "KXBRASILEIROGAME",       // Brasileirão (Brazil)
+  "KXURYPDGAME",            // Uruguayan Primera División
+  "KXECULPGAME",            // Ecuador Liga Pro
+  "KXPERLIGA1GAME",         // Peruvian Liga 1
+  "KXVENFUTVEGAME",         // Venezuelan Liga FUTVE
+  "KXAPFDDHGAME",           // APF División de Honor (Paraguay)
+  "KXDIMAYORGAME",          // Dominican Republic Di-Mayor
+  "KXCHLLDPGAME",           // Chilean Primera División
+  // ── Asia / Pacific ───────────────────────────────────────────────────────
+  "KXJLEAGUEGAME",          // J-League (Japan)
+  "KXKLEAGUEGAME",          // K-League (South Korea)
+  "KXALEAGUEGAME",          // A-League (Australia)
+  "KXCHNSLGAME",            // Chinese Super League
+  "KXTHAIL1GAME",           // Thai League 1
+  "KXAFCCLGAME",            // AFC Champions League
+  // ── Middle East / Africa ─────────────────────────────────────────────────
+  "KXSAUDIPLGAME",          // Saudi Pro League
+  "KXAFCONGAME",            // CAF Champions League / AFCON
+  // ── International & Other ────────────────────────────────────────────────
+  "KXINTLFRIENDLYGAME",     // International Friendlies
+  "KXFIFAGAME",             // FIFA competitions
+  "KXCLUBWCGAME",           // FIFA Club World Cup
+  "KXEWSLGAME",             // English Women's Super League
 ];
 
 // Prices from Kalshi are decimals in [0, 1] — already a probability
