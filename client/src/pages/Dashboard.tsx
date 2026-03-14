@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
-// ─── Types ─────────────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type MarketTier = "bet" | "watch" | "early" | "cold";
 
@@ -88,7 +88,7 @@ interface Settings {
   minBloatScore: number;
 }
 
-// ─── Tier config ──────────────────────────────────────────────────────────────
+// ─── Tier config ─────────────────────────────────────────────────────────────
 
 const TIER_CONFIG: Record<MarketTier, {
   label: string;
@@ -132,7 +132,7 @@ const TIER_CONFIG: Record<MarketTier, {
   },
 };
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function bloatLabel(score: number): { label: string; color: string; bar: string } {
   if (score >= 70) return { label: "STRONG", color: "bg-red-500 text-white", bar: "bg-red-500" };
@@ -145,7 +145,7 @@ const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2
 const fmtPct = (n: number | null) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
 const fmtMoney = (n: number) => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
 
-// ─── Credentials Panel ──────────────────────────────────────────────────────────────────
+// ─── Credentials Panel ────────────────────────────────────────────────────────
 
 function CredentialsPanel({ onConnected }: { onConnected: () => void }) {
   const { toast } = useToast();
@@ -229,7 +229,7 @@ function CredentialsPanel({ onConnected }: { onConnected: () => void }) {
   );
 }
 
-// ─── Bot Control Panel ────────────────────────────────────────────────────────────────
+// ─── Bot Control Panel ────────────────────────────────────────────────────────
 
 function BotPanel() {
   const { toast } = useToast();
@@ -457,7 +457,7 @@ function BotPanel() {
   );
 }
 
-// ─── Signal Card ────────────────────────────────────────────────────────────────────────
+// ─── Signal Card ──────────────────────────────────────────────────────────────
 
 function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }) {
   const { toast } = useToast();
@@ -500,12 +500,14 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
   });
 
   const { label, color, bar } = bloatLabel(signal.bloatScore);
-  const noOdds = signal.drawPrice ? `${signal.drawPrice}¢` : "—";
-  const yesOdds = signal.yesPrice ? `${signal.yesPrice}¢` : "—";
+  // Prices are decimal probabilities (0-1); display as cents (e.g. 0.52 → "52¢")
+  const noOdds = signal.drawPrice ? `${Math.round(signal.drawPrice * 100)}¢` : "—";
+  const yesOdds = signal.yesPrice ? `${Math.round(signal.yesPrice * 100)}¢` : "—";
   const budget = parseFloat(betAmt) || 0;
 
+  // price is a decimal (e.g. 0.52); each contract costs `price` dollars and pays $1 on win
   function calcPayout(price: number, amount: number) {
-    const contracts = Math.floor(amount / (price / 100));
+    const contracts = Math.floor(amount / price);
     return (contracts * 1.0).toFixed(2);
   }
 
@@ -632,7 +634,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
                 onClick={() => logOutcome.mutate({
                   outcome: "won",
                   profit: signal.drawPrice && signal.betSide === "no"
-                    ? (Math.floor((signal.betAmount ?? 0) / (signal.drawPrice / 100)) - (signal.betAmount ?? 0))
+                    ? (Math.floor((signal.betAmount ?? 0) / signal.drawPrice) - (signal.betAmount ?? 0))
                     : (signal.betAmount ?? 0)
                 })}
                 data-testid="button-won">Won ✓</Button>
@@ -665,7 +667,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
   );
 }
 
-// ─── Stats Bar ────────────────────────────────────────────────────────────────────────
+// ─── Stats Bar ────────────────────────────────────────────────────────────────
 
 function StatsBar() {
   const { data: stats } = useQuery<Stats>({ queryKey: ["/api/stats"] });
@@ -693,7 +695,7 @@ function StatsBar() {
   );
 }
 
-// ─── Trade History ───────────────────────────────────────────────────────────────────────
+// ─── Trade History ────────────────────────────────────────────────────────────
 
 function TradeHistory({ signals }: { signals: Signal[] }) {
   const traded = signals.filter(s => ["auto_traded", "manually_traded"].includes(s.status));
@@ -726,157 +728,79 @@ function TradeHistory({ signals }: { signals: Signal[] }) {
   );
 }
 
-// ─── Live Scoreboard ──────────────────────────────────────────────────────────────────────
+// ─── Live Scoreboard ────────────────────────────────────────────────────────
 
 function ScoreboardRow({ market }: { market: ScoredMarket }) {
   const cfg = TIER_CONFIG[market.tier];
   const favPct = market.favoriteProb != null ? `${Math.round(market.favoriteProb * 100)}%` : "—";
-  const noPr = market.drawPrice != null ? `${market.drawPrice}¢` : "—";
-  const min = market.minuteEstimate != null ? `${market.minuteEstimate}'` : "—";
-  const displayTitle = market.title.replace(/^(Will |Who wins |Match winner:\s*)/i, "");
+  // Prices are decimal probabilities (0-1)
+  const noPr = market.drawPrice != null ? `${Math.round(market.drawPrice * 100)}¢` : "—";
+  const yesPr = market.yesPrice != null ? `${Math.round(market.yesPrice * 100)}¢` : "—";
 
   return (
-    <div
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${cfg.border} ${cfg.bg} transition-all`}
-      data-testid={`scoreboard-row-${market.ticker}`}
-    >
+    <div className={`flex items-center gap-3 p-3 rounded-lg border ${cfg.border} ${cfg.bg}`}>
       <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{displayTitle}</p>
-        <p className="text-xs text-muted-foreground">{market.ticker}</p>
+        <p className="text-xs font-medium truncate">{market.title}</p>
+        <p className="text-[10px] text-muted-foreground">{market.ticker}</p>
       </div>
-      <div className="flex items-center gap-4 text-xs shrink-0">
-        <div className="text-center hidden sm:block">
-          <p className="text-muted-foreground">Fav</p>
-          <p className="font-mono font-semibold text-orange-400">{favPct}</p>
-        </div>
-        <div className="text-center hidden sm:block">
-          <p className="text-muted-foreground">NO</p>
-          <p className="font-mono font-semibold text-green-400">{noPr}</p>
-        </div>
-        <div className="text-center hidden sm:block">
-          <p className="text-muted-foreground">Min</p>
-          <p className="font-mono font-semibold text-purple-400">{min}</p>
-        </div>
-        <div className="text-center">
-          <p className="text-muted-foreground">Score</p>
-          <p className="font-mono font-bold">{market.bloatScore}</p>
-        </div>
-        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${cfg.badge}`}>
-          {cfg.badgeText}
-        </span>
+      <div className="flex items-center gap-3 text-xs shrink-0">
+        <span className="text-orange-400 font-mono">{favPct}</span>
+        <span className="text-green-400 font-mono">{noPr}</span>
+        <span className="text-blue-400 font-mono">{yesPr}</span>
+        <Badge className={`${cfg.badge} text-[10px] h-4 px-1.5 border`}>{cfg.badgeText}</Badge>
       </div>
     </div>
   );
 }
 
 function LiveScoreboard() {
-  const [showCold, setShowCold] = useState(false);
-
-  const { data, isLoading, error, refetch } = useQuery<{ markets: ScoredMarket[]; fetchedAt: string }>({
+  const { data: markets, isLoading } = useQuery<ScoredMarket[]>({
     queryKey: ["/api/markets"],
     refetchInterval: 30000,
-    staleTime: 25000,
   });
 
-  const markets = data?.markets ?? [];
-  const hotMarkets = markets.filter(m => m.tier !== "cold");
-  const coldMarkets = markets.filter(m => m.tier === "cold");
-  const betCount = markets.filter(m => m.tier === "bet").length;
-  const watchCount = markets.filter(m => m.tier === "watch").length;
-
-  const lastFetch = data?.fetchedAt ? new Date(data.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : null;
+  if (isLoading) return <div className="h-24 rounded-xl bg-muted animate-pulse mb-5" />;
+  if (!markets?.length) return null;
 
   return (
-    <Card className="border rounded-xl mb-5" data-testid="live-scoreboard">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            Live Market Scoreboard
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            {betCount > 0 && (
-              <Badge className="bg-green-500/20 text-green-300 border-green-500/30 text-xs">
-                {betCount} BET
-              </Badge>
-            )}
-            {watchCount > 0 && (
-              <Badge className="bg-yellow-500/20 text-yellow-300 border-yellow-500/30 text-xs">
-                {watchCount} WATCH
-              </Badge>
-            )}
-            <button
-              className="text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => refetch()}
-              data-testid="button-refresh-scoreboard"
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
-        {lastFetch && (
-          <p className="text-xs text-muted-foreground">Updated {lastFetch} · auto-refreshes every 30s</p>
+    <div className="mb-5">
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Live Markets</h2>
+        <span className="text-xs text-muted-foreground">{markets.length} tracked</span>
+      </div>
+      <div className="space-y-1.5">
+        {markets.slice(0, 8).map(m => <ScoreboardRow key={m.ticker} market={m} />)}
+        {markets.length > 8 && (
+          <p className="text-xs text-muted-foreground text-center pt-1">+{markets.length - 8} more markets</p>
         )}
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {isLoading && (
-          <div className="text-center py-8 text-sm text-muted-foreground">
-            Loading Kalshi soccer markets...
-          </div>
-        )}
-        {error && (
-          <div className="text-center py-4 text-xs text-red-400">
-            Failed to load markets. Check connection.
-          </div>
-        )}
-        {!isLoading && !error && markets.length === 0 && (
-          <div className="text-center py-8 text-sm text-muted-foreground">
-            No live soccer markets found on Kalshi right now.
-          </div>
-        )}
-        {hotMarkets.map(m => (
-          <ScoreboardRow key={m.ticker} market={m} />
-        ))}
-        {coldMarkets.length > 0 && (
-          <div>
-            <button
-              className="w-full text-xs text-muted-foreground py-1.5 hover:text-foreground flex items-center justify-center gap-1"
-              onClick={() => setShowCold(v => !v)}
-              data-testid="button-toggle-cold"
-            >
-              {showCold ? "▲ Hide" : "▼ Show"} {coldMarkets.length} cold markets (no bloat)
-            </button>
-            {showCold && coldMarkets.map(m => (
-              <ScoreboardRow key={m.ticker} market={m} />
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────────────────
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
+  const { data: signals = [], isLoading } = useQuery<Signal[]>({
+    queryKey: ["/api/signals"],
+    refetchInterval: 10000,
+  });
+
   const { data: settings } = useQuery<Settings>({ queryKey: ["/api/settings"] });
-  const { data: signals } = useQuery<Signal[]>({ queryKey: ["/api/signals"], refetchInterval: 10000 });
   const { data: status } = useQuery<ScanStatus>({ queryKey: ["/api/status"], refetchInterval: 5000 });
-  const [showCreds, setShowCreds] = useState(false);
+
   const { toast } = useToast();
 
-  const isConnected = status?.credentialsLoaded ?? false;
-
-  const scanMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("POST", "/api/scan").then(r => r.json()),
-    onSuccess: (data: { found: number }) => {
+  const manualScan = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/scan").then(r => r.json()),
+    onSuccess: (data: { count: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/markets"] });
       toast({
-        title: `Scan complete — ${data.found} signal${data.found !== 1 ? "s" : ""} found`,
+        title: `Scan complete`,
+        description: `${data.count} market${data.count !== 1 ? "s" : ""} scanned`,
       });
     },
     onError: (e: Error) => {
@@ -884,92 +808,137 @@ export default function Dashboard() {
     },
   });
 
-  const activeSignals = (signals ?? []).filter(s => s.status === "active");
-  const skippedSignals = (signals ?? []).filter(s => s.status === "skipped");
-  const autoSignals = (signals ?? []).filter(s => s.status === "auto_traded");
+  const activeSignals = signals.filter(s => s.status === "active");
+  const skippedSignals = signals.filter(s => s.status === "skipped");
+  const isConnected = status?.credentialsLoaded ?? false;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="max-w-2xl mx-auto px-4 py-6">
-
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-lg font-bold tracking-tight">Favorite Bloat Tracker</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Soccer prediction market scanner · Kalshi
-            </p>
+    <div className="min-h-screen bg-background">
+      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-10">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">⚽</span>
+            <h1 className="text-base font-bold">Bloat Scout</h1>
+            {status?.scanning && (
+              <Badge className="h-4 px-1.5 text-[10px] bg-blue-500/20 text-blue-300 border-0 animate-pulse">SCANNING</Badge>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Button
-              size="sm"
-              variant="outline"
-              className="h-8 text-xs"
-              onClick={() => scanMutation.mutate()}
-              disabled={scanMutation.isPending}
+              size="sm" variant="outline"
+              className="h-7 text-xs"
+              onClick={() => manualScan.mutate()}
+              disabled={manualScan.isPending}
               data-testid="button-scan"
             >
-              {scanMutation.isPending ? "Scanning..." : "Scan Now"}
-            </Button>
-            <Button
-              size="sm"
-              variant={showCreds ? "default" : "outline"}
-              className="h-8 text-xs"
-              onClick={() => setShowCreds(v => !v)}
-              data-testid="button-toggle-creds"
-            >
-              {isConnected ? "● Connected" : "Connect API"}
+              {manualScan.isPending ? "Scanning..." : "Scan Now"}
             </Button>
           </div>
         </div>
+      </header>
 
-        {/* Credentials panel (collapsible) */}
-        {(showCreds || !isConnected) && (
-          <div className="mb-5">
-            <CredentialsPanel onConnected={() => setShowCreds(false)} />
-          </div>
-        )}
-
-        {/* Stats Bar */}
+      <main className="max-w-6xl mx-auto px-4 py-5">
         <StatsBar />
+
+        {/* How it works */}
+        <div className="mb-5 p-3 rounded-lg bg-muted/30 border">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            <span className="font-medium text-orange-400">Favorite Bloat:</span> Late-game (65'+) tied soccer matches where the pre-game favorite is still priced too high (60–78%).
+            Bet <span className="text-green-400 font-medium">NO</span> (draw/upset), <span className="text-blue-400 font-medium">YES</span> (underdog wins), or both.
+            {isConnected && status?.botEnabled
+              ? <span className="text-green-400 font-medium"> Bot is actively placing bets.</span>
+              : <span className="text-muted-foreground"> Connect API key + enable bot to auto-trade.</span>
+            }
+          </p>
+        </div>
 
         {/* Live Scoreboard */}
         <LiveScoreboard />
 
-        {/* Main Tabs */}
-        <Tabs defaultValue="signals">
-          <TabsList className="w-full mb-4">
-            <TabsTrigger value="signals" className="flex-1" data-testid="tab-signals">
-              Signals {activeSignals.length > 0 && `(${activeSignals.length})`}
-            </TabsTrigger>
-            <TabsTrigger value="bot" className="flex-1" data-testid="tab-bot">Bot</TabsTrigger>
-            <TabsTrigger value="history" className="flex-1" data-testid="tab-history">History</TabsTrigger>
-          </TabsList>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Signals — left 2 cols */}
+          <div className="lg:col-span-2">
+            <Tabs defaultValue="active">
+              <TabsList className="mb-4">
+                <TabsTrigger value="active" data-testid="tab-active">
+                  Active
+                  {activeSignals.length > 0 && (
+                    <Badge className="ml-1.5 h-4 px-1.5 text-[10px] bg-orange-500 text-white">{activeSignals.length}</Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="history" data-testid="tab-history">Trades</TabsTrigger>
+                <TabsTrigger value="skipped" data-testid="tab-skipped">
+                  Skipped {skippedSignals.length > 0 && `(${skippedSignals.length})`}
+                </TabsTrigger>
+              </TabsList>
 
-          <TabsContent value="signals" className="space-y-3" data-testid="content-signals">
-            {!settings ? null : activeSignals.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-sm text-muted-foreground">No active signals</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Hit Scan Now or enable auto-scan to detect favorite bloat.
-                </p>
-              </div>
-            ) : (
-              activeSignals.map(s => <SignalCard key={s.id} signal={s} settings={settings} />)
-            )}
-          </TabsContent>
+              <TabsContent value="active">
+                {isLoading ? (
+                  <div className="space-y-3">{[1, 2].map(i => <div key={i} className="h-48 rounded-xl bg-muted animate-pulse" />)}</div>
+                ) : activeSignals.length === 0 ? (
+                  <div className="text-center py-16 space-y-3">
+                    <div className="text-4xl">⚽</div>
+                    <p className="text-sm font-medium text-muted-foreground">No bloat signals detected</p>
+                    <p className="text-xs text-muted-foreground max-w-xs mx-auto">
+                      Watching Kalshi soccer markets. Signals appear when a late-game favorite is priced too high on a tied match.
+                    </p>
+                    <Button size="sm" variant="outline" onClick={() => manualScan.mutate()} disabled={manualScan.isPending} data-testid="button-scan-empty">
+                      Scan Now
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {activeSignals.map(s => (
+                      <SignalCard key={s.id} signal={s} settings={settings ?? {
+                        minMinute: 65, maxFavoriteProb: 0.78, minFavoriteProb: 0.60,
+                        scanEnabled: true, scanIntervalSec: 60, botEnabled: false,
+                        betMode: "no_only", betAmountDollars: 2, minBloatScore: 40,
+                      }} />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
 
-          <TabsContent value="bot" className="space-y-3" data-testid="content-bot">
+              <TabsContent value="history">
+                <TradeHistory signals={signals} />
+              </TabsContent>
+
+              <TabsContent value="skipped">
+                {skippedSignals.length === 0 ? (
+                  <div className="text-center py-12 text-sm text-muted-foreground">No skipped signals</div>
+                ) : (
+                  <div className="space-y-2">
+                    {skippedSignals.map(s => (
+                      <div key={s.id} className="p-3 rounded-lg border opacity-50 text-sm">
+                        <p className="font-medium truncate">{s.marketTitle}</p>
+                        <p className="text-xs text-muted-foreground">Bloat {s.bloatScore} · {fmtProb(s.favoriteProb)} fav · {fmtTime(s.detectedAt)}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          {/* Right panel */}
+          <div className="space-y-4">
+            {!isConnected ? (
+              <CredentialsPanel onConnected={() => {
+                queryClient.invalidateQueries({ queryKey: ["/api/status"] });
+                queryClient.invalidateQueries({ queryKey: ["/api/balance"] });
+              }} />
+            ) : null}
             <BotPanel />
-          </TabsContent>
+          </div>
+        </div>
+      </main>
 
-          <TabsContent value="history" data-testid="content-history">
-            <TradeHistory signals={signals ?? []} />
-          </TabsContent>
-        </Tabs>
-
-        <PerplexityAttribution />
-      </div>
+      <footer className="border-t py-4 mt-8">
+        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">Bloat Scout · Trade responsibly</p>
+          <PerplexityAttribution />
+        </div>
+      </footer>
     </div>
   );
 }
