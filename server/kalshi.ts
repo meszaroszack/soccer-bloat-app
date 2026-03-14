@@ -80,6 +80,9 @@ export interface KalshiMarket {
   status: string;
   close_time?: string;
   expiration_time?: string;
+  // expected_expiration_time = the actual match kickoff time (when the game result is expected).
+  // close_time on soccer markets is a 2-week settlement fallback — DO NOT use for game timing.
+  expected_expiration_time?: string;
 }
 
 // Known Kalshi soccer series tickers — comprehensive list covering all active leagues
@@ -151,6 +154,10 @@ const SOCCER_SERIES = [
   "KXFIFAGAME",             // FIFA competitions
   "KXCLUBWCGAME",           // FIFA Club World Cup
   "KXEWSLGAME",             // English Women's Super League
+  // ── Spanish lower divisions (active on Kalshi) ───────────────────────────
+  "KXLALIGA2GAME",          // LaLiga Hypermotion (2nd div) — duplicate alias, harmless
+  "KXLALIGA3GAME",          // Primera Federación (Spain 3rd)
+  "KXLIGUE2GAME",           // Ligue 2 (France 2nd)
 ];
 
 // Prices from Kalshi are decimals in [0, 1] — already a probability
@@ -160,23 +167,61 @@ function priceToProb(price?: number): number | null {
 }
 
 /**
- * Kalshi soccer markets use close_time as the match KICKOFF time
- * (betting closes when the match starts).
+ * Get the kickoff (game start) time for a Kalshi soccer market.
  *
- * We derive the estimated game minute from how long ago kickoff was:
- * - If kickoff is in the future: game hasn't started (return undefined)
- * - If kickoff was 0-110 min ago: game is live, estimate minute from elapsed time
- * - If kickoff was >110 min ago: game is finished (return undefined)
+ * IMPORTANT: For soccer markets Kalshi sets close_time to a 2-week settlement
+ * fallback date — it is NOT the kickoff time. The actual game time is in
+ * expected_expiration_time (= when the match result is expected to be known,
+ * which is roughly kickoff + ~2 hours).
  *
- * A standard match has 90 min + stoppage. We cap at 95 to cover extra time.
+ * We subtract 2 hours from expected_expiration_time to approximate kickoff.
+ * This is close enough for minute estimation purposes.
  */
-function estimateMinute(closeTime?: string): number | undefined {
-  if (!closeTime) return undefined;
-  const kickoffMs = new Date(closeTime).getTime();
+function getKickoffTime(market: KalshiMarket): string | null {
+  if (market.expected_expiration_time) {
+    // expected_expiration_time = end-of-match (kickoff + ~2h). Subtract 2h to get kickoff.
+    const endMs = new Date(market.expected_expiration_time).getTime();
+    const kickoffMs = endMs - 2 * 60 * 60 * 1000;
+    return new Date(kickoffMs).toISOString();
+  }
+  // Fallback: this path should rarely be hit for soccer markets
+  return market.expiration_time ?? market.close_time ?? null;
+}
+
+/**
+ * Returns true if a market's game falls on today's calendar date (UTC).
+ */
+function isToday(market: KalshiMarket): boolean {
+  const kickoff = getKickoffTime(market);
+  if (!kickoff) return false;
+  const gameDate = new Date(kickoff);
+  const now = new Date();
+  return (
+    gameDate.getUTCFullYear() === now.getUTCFullYear() &&
+    gameDate.getUTCMonth() === now.getUTCMonth() &&
+    gameDate.getUTCDate() === now.getUTCDate()
+  );
+}
+
+/**
+ * Estimate the current game minute from kickoff time.
+ *
+ * - If kickoff is in the future: game hasn't started (return undefined)
+ * - If kickoff was 0-115 min ago: game is live, estimate minute from elapsed time
+ *   (115 min covers 90 min + generous stoppage/extra time buffer)
+ * - If kickoff was >115 min ago: game has finished (return undefined)
+ *
+ * A standard match: 90 min + stoppage. Extra time adds up to 30 more min.
+ * We cap at 95 for display but allow up to 115 min elapsed to keep finished
+ * games visible briefly while they may still be settling.
+ */
+function estimateMinute(kickoffTime: string | null): number | undefined {
+  if (!kickoffTime) return undefined;
+  const kickoffMs = new Date(kickoffTime).getTime();
   const now = Date.now();
   const elapsedMs = now - kickoffMs;      // positive = kickoff has passed
   if (elapsedMs < 0) return undefined;    // not started yet
-  if (elapsedMs > 110 * 60000) return undefined; // finished
+  if (elapsedMs > 115 * 60000) return undefined; // finished
   return Math.min(95, Math.round(elapsedMs / 60000));
 }
 
@@ -202,7 +247,7 @@ export interface ScoredMarket {
   drawPrice: number | null;
   yesPrice: number | null;
   minuteEstimate: number | null; // null = pre-game or finished
-  kickoffTime: string | null;    // ISO string of close_time (= kickoff)
+  kickoffTime: string | null;    // ISO string of estimated kickoff time
   isLive: boolean;               // true if game is currently in progress
   bloatScore: number;
   tier: MarketTier;
@@ -215,11 +260,10 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
 
   for (const m of markets) {
     const yesProb = priceToProb(m.yes_bid_dollars);
-    const noProb = priceToProb(m.no_bid_dollars);
-    const minuteEstimate = estimateMinute(m.close_time ?? m.expiration_time);
+    const kickoffTime = getKickoffTime(m);
+    const minuteEstimate = estimateMinute(kickoffTime);
     const bloatScore = yesProb != null ? calculateBloatScore(yesProb, minuteEstimate) : 0;
 
-    const kickoffTime = m.close_time ?? m.expiration_time ?? null;
     const isLive = minuteEstimate != null;
 
     // Tier logic:
@@ -286,6 +330,7 @@ export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
     // Exclude pure "-TIE" markets — those are draw contracts.
     // We want the team-win markets (e.g. "-CFC", "-BMU") which tell us
     // the favourite probability for bloat detection.
+    // Also filter to today's games only so the scoreboard stays relevant.
     const seen = new Set<string>();
     return all.filter((m) => {
       if (seen.has(m.ticker)) return false;
@@ -293,7 +338,9 @@ export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
       if (m.status !== "active") return false;
       // Keep team-winner markets only (not the draw/TIE market)
       const upper = m.ticker.toUpperCase();
-      return !upper.endsWith("-TIE");
+      if (upper.endsWith("-TIE")) return false;
+      // Only show today's games — filter by expected_expiration_time date
+      return isToday(m);
     });
   } catch (e) {
     console.error("Kalshi soccer fetch error:", e);
@@ -329,7 +376,8 @@ export async function scanForBloat(config: {
     const favoriteProb = yesProb;
     if (favoriteProb < config.minFavoriteProb || favoriteProb > config.maxFavoriteProb) continue;
 
-    const minuteEstimate = estimateMinute(market.close_time ?? market.expiration_time);
+    const kickoffTime = getKickoffTime(market);
+    const minuteEstimate = estimateMinute(kickoffTime);
 
     // Skip pre-game (not yet started) and finished markets from the bloat scan.
     // estimateMinute returns undefined for both cases; we only want live games.
