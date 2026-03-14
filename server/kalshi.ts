@@ -80,21 +80,22 @@ export interface KalshiMarket {
   expiration_time?: string;
 }
 
-const SOCCER_KEYWORDS = [
-  "soccer", "football", "premier league", "la liga", "bundesliga", "serie a",
-  "ligue 1", "champions league", "europa league", "conference league", "mls",
-  "world cup", "euro", "copa", "fa cup", "efl", "eredivisie", "primeira liga",
-  "will win", "team win", "match winner", "full time result",
+// Known Kalshi soccer series tickers — one per league
+const SOCCER_SERIES = [
+  "KXEPLGAME",           // English Premier League
+  "KXBUNDESLIGAGAME",    // Bundesliga
+  "KXLALIGAGAME",        // La Liga
+  "KXSERIEAGAME",        // Serie A
+  "KXLIGAONEGAME",       // Ligue 1
+  "KXCHAMPIONSLEAGUEGAME", // UEFA Champions League
+  "KXEUROPALEAGUEGAME",  // UEFA Europa League
+  "KXMLSGAME",           // MLS
 ];
 
-function isSoccerMarket(title: string, eventTicker: string): boolean {
-  const combined = (title + " " + eventTicker).toLowerCase();
-  return SOCCER_KEYWORDS.some(kw => combined.includes(kw));
-}
-
+// Prices from Kalshi are decimals in [0, 1] — already a probability
 function priceToProb(price?: number): number | null {
-  if (price == null || price < 1 || price > 99) return null;
-  return price / 100;
+  if (price == null || price <= 0 || price > 1) return null;
+  return price; // already a probability (e.g. 0.52 = 52%)
 }
 
 function estimateMinute(closeTime?: string): number | undefined {
@@ -183,15 +184,37 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
 
 export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
   try {
-    const url = `${KALSHI_BASE}/markets?status=open&limit=200`;
-    const resp = await fetch(url);
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    return (data.markets ?? []).filter((m: KalshiMarket) =>
-      m.status === "open" && isSoccerMarket(m.title, m.event_ticker || "")
+    // Fetch each soccer series in parallel — Kalshi organises by series ticker
+    const results = await Promise.allSettled(
+      SOCCER_SERIES.map(async (series) => {
+        const url = `${KALSHI_BASE}/markets?status=open&limit=200&series_ticker=${series}`;
+        const resp = await fetch(url);
+        if (!resp.ok) return [] as KalshiMarket[];
+        const data = await resp.json();
+        return (data.markets ?? []) as KalshiMarket[];
+      })
     );
+
+    const all: KalshiMarket[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") all.push(...r.value);
+    }
+
+    // Deduplicate by ticker and only keep open markets.
+    // Exclude pure "-TIE" markets — those are draw contracts.
+    // We want the team-win markets (e.g. "-CFC", "-BMU") which tell us
+    // the favourite probability for bloat detection.
+    const seen = new Set<string>();
+    return all.filter((m) => {
+      if (seen.has(m.ticker)) return false;
+      seen.add(m.ticker);
+      if (m.status !== "open") return false;
+      // Keep team-winner markets only (not the draw/TIE market)
+      const upper = m.ticker.toUpperCase();
+      return !upper.endsWith("-TIE");
+    });
   } catch (e) {
-    console.error("Kalshi public fetch error:", e);
+    console.error("Kalshi soccer fetch error:", e);
     return [];
   }
 }
@@ -203,8 +226,8 @@ export interface BloatCandidate {
   marketTitle: string;
   favoriteProb: number;
   drawProb?: number;
-  drawPrice?: number;   // NO price in cents (1-99)
-  yesPrice?: number;    // YES price in cents (1-99)
+  drawPrice?: number;   // NO price as decimal probability (0-1)
+  yesPrice?: number;    // YES price as decimal probability (0-1)
   minuteEstimate?: number;
   bloatScore: number;
 }
@@ -288,16 +311,19 @@ export async function placeBloatBet(
 ): Promise<{ orderId: string; side: string; price: number; cost: number }[]> {
   const results: { orderId: string; side: string; price: number; cost: number }[] = [];
 
-  // Helper: calculate contracts from dollar amount and price
-  // price is in cents (1-99). Each contract costs price/100 dollars.
+  // Helper: calculate contracts from dollar amount and price.
+  // price is a decimal probability [0,1] — each contract costs `price` dollars.
   function calcContracts(price: number, dollarBudget: number): number {
-    const costPerContract = price / 100;
+    const costPerContract = price; // price IS the dollar cost per contract
     return Math.max(1, Math.floor(dollarBudget / costPerContract));
   }
 
   async function placeOrder(side: "no" | "yes", price: number, budget: number) {
     const count = calcContracts(price, budget);
     const clientOrderId = `bloat-${Date.now()}-${side}`;
+
+    // Kalshi order API expects prices as integers in cents (1-99)
+    const priceInCents = Math.round(price * 100);
 
     const body: Record<string, unknown> = {
       ticker,
@@ -308,11 +334,11 @@ export async function placeBloatBet(
       time_in_force: "fill_or_kill",
     };
 
-    // Set price on the appropriate side
+    // Set price on the appropriate side (as integer cents)
     if (side === "no") {
-      body.no_price = price;
+      body.no_price = priceInCents;
     } else {
-      body.yes_price = price;
+      body.yes_price = priceInCents;
     }
 
     const resp = await kalshiPost(apiKeyId, privateKeyPem, "/portfolio/orders", body);
@@ -320,8 +346,8 @@ export async function placeBloatBet(
     results.push({
       orderId: order.order_id,
       side,
-      price,
-      cost: (price / 100) * count,
+      price,          // keep as decimal for display
+      cost: price * count, // price (decimal) * contracts = dollars
     });
   }
 
