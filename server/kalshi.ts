@@ -70,11 +70,13 @@ export interface KalshiMarket {
   ticker: string;
   event_ticker: string;
   title: string;
-  yes_bid?: number;
-  yes_ask?: number;
-  no_bid?: number;
-  no_ask?: number;
-  volume?: number;
+  // Kalshi public API returns prices with _dollars suffix (0.0–1.0 range)
+  yes_bid_dollars?: number;
+  yes_ask_dollars?: number;
+  no_bid_dollars?: number;
+  no_ask_dollars?: number;
+  last_price_dollars?: number;
+  volume_fp?: number;
   status: string;
   close_time?: string;
   expiration_time?: string;
@@ -153,8 +155,8 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
   const scored: ScoredMarket[] = [];
 
   for (const m of markets) {
-    const yesProb = priceToProb(m.yes_bid);
-    const noProb = priceToProb(m.no_bid);
+    const yesProb = priceToProb(m.yes_bid_dollars);
+    const noProb = priceToProb(m.no_bid_dollars);
     const minuteEstimate = estimateMinute(m.close_time ?? m.expiration_time);
     const bloatScore = yesProb != null ? calculateBloatScore(yesProb, minuteEstimate) : 0;
 
@@ -183,8 +185,8 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
       eventTicker: m.event_ticker,
       title: m.title,
       favoriteProb: yesProb,
-      drawPrice: m.no_bid ?? null,
-      yesPrice: m.yes_bid ?? null,
+      drawPrice: m.no_bid_dollars ?? null,
+      yesPrice: m.yes_bid_dollars ?? null,
       minuteEstimate: minuteEstimate ?? null,
       kickoffTime,
       isLive,
@@ -207,6 +209,7 @@ export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
     // Fetch each soccer series in parallel — Kalshi organises by series ticker
     const results = await Promise.allSettled(
       SOCCER_SERIES.map(async (series) => {
+        // Query param is 'open'; Kalshi returns status='active' in the response
         const url = `${KALSHI_BASE}/markets?status=open&limit=200&series_ticker=${series}`;
         const resp = await fetch(url);
         if (!resp.ok) return [] as KalshiMarket[];
@@ -228,7 +231,7 @@ export async function fetchSoccerMarkets(): Promise<KalshiMarket[]> {
     return all.filter((m) => {
       if (seen.has(m.ticker)) return false;
       seen.add(m.ticker);
-      if (m.status !== "open") return false;
+      if (m.status !== "active") return false;
       // Keep team-winner markets only (not the draw/TIE market)
       const upper = m.ticker.toUpperCase();
       return !upper.endsWith("-TIE");
@@ -261,7 +264,7 @@ export async function scanForBloat(config: {
   const candidates: BloatCandidate[] = [];
 
   for (const market of markets) {
-    const yesProb = priceToProb(market.yes_bid);
+    const yesProb = priceToProb(market.yes_bid_dollars);
     if (yesProb == null) continue;
 
     const favoriteProb = yesProb;
@@ -279,7 +282,7 @@ export async function scanForBloat(config: {
     const bloatScore = calculateBloatScore(favoriteProb, minuteEstimate);
     if (bloatScore < 10) continue;
 
-    const noProb = priceToProb(market.no_bid);
+    const noProb = priceToProb(market.no_bid_dollars);
 
     candidates.push({
       eventTicker: market.event_ticker,
@@ -288,8 +291,8 @@ export async function scanForBloat(config: {
       marketTitle: market.title,
       favoriteProb,
       drawProb: noProb ?? undefined,
-      drawPrice: market.no_bid,
-      yesPrice: market.yes_bid,
+      drawPrice: market.no_bid_dollars,
+      yesPrice: market.yes_bid_dollars,
       minuteEstimate,
       bloatScore,
     });
