@@ -682,7 +682,7 @@ export default function Dashboard() {
   const isConnected = status?.credentialsLoaded ?? false;
 
   const manualScan = useMutation({
-    mutationFn: () => apiRequest("POST", "/api/scan"),
+    mutationFn: () => apiRequest("POST", "/api/scan").then(r => r.json()),
     onSuccess: (data: { found: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
