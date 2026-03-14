@@ -157,7 +157,7 @@ function CredentialsPanel({ onConnected }: { onConnected: () => void }) {
     mutationFn: () => apiRequest("POST", "/api/credentials", {
       apiKeyId: apiKeyId.trim(),
       privateKeyPem: privateKey.trim(),
-    }),
+    }).then(r => r.json()),
     onSuccess: (data: { balance: number }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/status"] });
       toast({
@@ -243,7 +243,7 @@ function BotPanel() {
   const merged = { ...settings, ...local } as Settings;
 
   const saveSettings = useMutation({
-    mutationFn: (body: Partial<Settings>) => apiRequest("PATCH", "/api/settings", body),
+    mutationFn: (body: Partial<Settings>) => apiRequest("PATCH", "/api/settings", body).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/status"] });
@@ -253,7 +253,7 @@ function BotPanel() {
   });
 
   const disconnect = useMutation({
-    mutationFn: () => apiRequest("DELETE", "/api/credentials"),
+    mutationFn: () => apiRequest("DELETE", "/api/credentials").then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/status"] });
       // Also turn off bot
@@ -472,7 +472,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
     mutationFn: () => apiRequest("POST", `/api/signals/${signal.id}/trade`, {
       betMode,
       betAmount: parseFloat(betAmt),
-    }),
+    }).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
@@ -487,7 +487,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
 
   const logOutcome = useMutation({
     mutationFn: (body: { outcome: string; profit: number }) =>
-      apiRequest("PATCH", `/api/signals/${signal.id}`, body),
+      apiRequest("PATCH", `/api/signals/${signal.id}`, body).then(r => r.json()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
@@ -495,7 +495,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
   });
 
   const skipSignal = useMutation({
-    mutationFn: () => apiRequest("PATCH", `/api/signals/${signal.id}`, { status: "skipped" }),
+    mutationFn: () => apiRequest("PATCH", `/api/signals/${signal.id}`, { status: "skipped" }).then(r => r.json()),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/signals"] }),
   });
 
