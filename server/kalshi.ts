@@ -98,13 +98,25 @@ function priceToProb(price?: number): number | null {
   return price; // already a probability (e.g. 0.52 = 52%)
 }
 
+/**
+ * Kalshi soccer markets use close_time as the match KICKOFF time
+ * (betting closes when the match starts).
+ *
+ * We derive the estimated game minute from how long ago kickoff was:
+ * - If kickoff is in the future: game hasn't started (return undefined)
+ * - If kickoff was 0-110 min ago: game is live, estimate minute from elapsed time
+ * - If kickoff was >110 min ago: game is finished (return undefined)
+ *
+ * A standard match has 90 min + stoppage. We cap at 95 to cover extra time.
+ */
 function estimateMinute(closeTime?: string): number | undefined {
   if (!closeTime) return undefined;
-  const msLeft = new Date(closeTime).getTime() - Date.now();
-  if (msLeft < 0 || msLeft > 120 * 60000) return undefined;
-  const elapsed = 95 * 60000 - msLeft;
-  if (elapsed < 0) return undefined;
-  return Math.round(elapsed / 60000);
+  const kickoffMs = new Date(closeTime).getTime();
+  const now = Date.now();
+  const elapsedMs = now - kickoffMs;      // positive = kickoff has passed
+  if (elapsedMs < 0) return undefined;    // not started yet
+  if (elapsedMs > 110 * 60000) return undefined; // finished
+  return Math.min(95, Math.round(elapsedMs / 60000));
 }
 
 export function calculateBloatScore(favoriteProb: number, minuteEstimate?: number): number {
@@ -128,7 +140,9 @@ export interface ScoredMarket {
   favoriteProb: number | null;
   drawPrice: number | null;
   yesPrice: number | null;
-  minuteEstimate: number | null;
+  minuteEstimate: number | null; // null = pre-game or finished
+  kickoffTime: string | null;    // ISO string of close_time (= kickoff)
+  isLive: boolean;               // true if game is currently in progress
   bloatScore: number;
   tier: MarketTier;
 }
@@ -144,17 +158,21 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
     const minuteEstimate = estimateMinute(m.close_time ?? m.expiration_time);
     const bloatScore = yesProb != null ? calculateBloatScore(yesProb, minuteEstimate) : 0;
 
+    const kickoffTime = m.close_time ?? m.expiration_time ?? null;
+    const isLive = minuteEstimate != null;
+
     // Tier logic:
-    // "bet"   — bloatScore >= 40, minute >= 65 → GO (green)
-    // "watch" — bloatScore >= 20, minute 50-65 → warming up (yellow)
-    // "early" — match detected but too early (minute < 50 or no minute) → (dim blue)
-    // "cold"  — no bloat / favorite prob out of range → (red/dim)
+    // "bet"   — live game, bloatScore >= 40, minute >= 65 → GO NOW (green pulsing)
+    // "watch" — live game, bloatScore >= 20, minute 50-64 → warming up (yellow)
+    // "early" — live game but < 50 min, OR pre-game → too early (blue)
+    // "cold"  — live game with no bloat detected → (dim red)
     let tier: MarketTier;
-    if (bloatScore >= 40 && (minuteEstimate == null || minuteEstimate >= 65)) {
+    if (isLive && bloatScore >= 40 && minuteEstimate! >= 65) {
       tier = "bet";
-    } else if (bloatScore >= 20) {
+    } else if (isLive && bloatScore >= 20 && minuteEstimate! >= 50) {
       tier = "watch";
-    } else if (yesProb != null && minuteEstimate != null && minuteEstimate < 65) {
+    } else if (!isLive || minuteEstimate! < 50) {
+      // Pre-game or very early in the match
       tier = "early";
     } else {
       tier = "cold";
@@ -168,6 +186,8 @@ export async function fetchAllSoccerMarketsScored(): Promise<ScoredMarket[]> {
       drawPrice: m.no_bid ?? null,
       yesPrice: m.yes_bid ?? null,
       minuteEstimate: minuteEstimate ?? null,
+      kickoffTime,
+      isLive,
       bloatScore,
       tier,
     });
@@ -248,7 +268,13 @@ export async function scanForBloat(config: {
     if (favoriteProb < config.minFavoriteProb || favoriteProb > config.maxFavoriteProb) continue;
 
     const minuteEstimate = estimateMinute(market.close_time ?? market.expiration_time);
-    if (config.minMinute && minuteEstimate != null && minuteEstimate < config.minMinute) continue;
+
+    // Skip pre-game (not yet started) and finished markets from the bloat scan.
+    // estimateMinute returns undefined for both cases; we only want live games.
+    if (minuteEstimate == null) continue;
+
+    // Enforce the minimum-minute threshold (default 65')
+    if (config.minMinute != null && minuteEstimate < config.minMinute) continue;
 
     const bloatScore = calculateBloatScore(favoriteProb, minuteEstimate);
     if (bloatScore < 10) continue;
