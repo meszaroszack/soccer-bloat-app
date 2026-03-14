@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PerplexityAttribution } from "@/components/PerplexityAttribution";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────────────────
 
 type MarketTier = "bet" | "watch" | "early" | "cold";
 
@@ -90,7 +90,7 @@ interface Settings {
   minBloatScore: number;
 }
 
-// ─── Tier config ─────────────────────────────────────────────────────────────
+// ─── Tier config ─────────────────────────────────────────────────────────────────
 
 const TIER_CONFIG: Record<MarketTier, {
   label: string;
@@ -106,7 +106,7 @@ const TIER_CONFIG: Record<MarketTier, {
     border: "border-green-500/50",
     bg: "bg-green-500/8",
     badge: "bg-green-500/20 text-green-300 border-green-500/30",
-    badgeText: "🟢 BET",
+    badgeText: "\uD83D\uDFE2 BET",
   },
   watch: {
     label: "WARMING UP",
@@ -114,7 +114,7 @@ const TIER_CONFIG: Record<MarketTier, {
     border: "border-yellow-500/40",
     bg: "bg-yellow-500/5",
     badge: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
-    badgeText: "🟡 WATCH",
+    badgeText: "\uD83D\uDFE1 WATCH",
   },
   early: {
     label: "TOO EARLY",
@@ -122,7 +122,7 @@ const TIER_CONFIG: Record<MarketTier, {
     border: "border-blue-500/20",
     bg: "bg-blue-500/3",
     badge: "bg-blue-500/10 text-blue-400/80 border-blue-500/20",
-    badgeText: "🔵 EARLY",
+    badgeText: "\uD83D\uDD35 EARLY",
   },
   cold: {
     label: "NO BLOAT",
@@ -130,11 +130,11 @@ const TIER_CONFIG: Record<MarketTier, {
     border: "border-red-500/20",
     bg: "bg-red-500/3",
     badge: "bg-red-500/10 text-red-400/70 border-red-500/20",
-    badgeText: "🔴 COLD",
+    badgeText: "\uD83D\uDD34 COLD",
   },
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────────────
 
 function bloatLabel(score: number): { label: string; color: string; bar: string } {
   if (score >= 70) return { label: "STRONG", color: "bg-red-500 text-white", bar: "bg-red-500" };
@@ -147,7 +147,7 @@ const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2
 const fmtPct = (n: number | null) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
 const fmtMoney = (n: number) => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
 
-// ─── Credentials Panel ────────────────────────────────────────────────────────
+// ─── Credentials Panel ────────────────────────────────────────────────────────────────
 
 function CredentialsPanel({ onConnected }: { onConnected: () => void }) {
   const { toast } = useToast();
@@ -231,7 +231,7 @@ function CredentialsPanel({ onConnected }: { onConnected: () => void }) {
   );
 }
 
-// ─── Bot Control Panel ────────────────────────────────────────────────────────
+// ─── Bot Control Panel ────────────────────────────────────────────────────────────────
 
 function BotPanel() {
   const { toast } = useToast();
@@ -459,7 +459,7 @@ function BotPanel() {
   );
 }
 
-// ─── Signal Card ──────────────────────────────────────────────────────────────
+// ─── Signal Card ─────────────────────────────────────────────────────────────────────────────
 
 function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }) {
   const { toast } = useToast();
@@ -479,7 +479,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
       queryClient.invalidateQueries({ queryKey: ["/api/signals"] });
       queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
       queryClient.invalidateQueries({ queryKey: ["/api/balance"] });
-      toast({ title: "Trade placed on Kalshi ✓" });
+      toast({ title: "Trade placed on Kalshi \u2713" });
       setShowOutcome(true);
     },
     onError: (e: Error) => {
@@ -669,7 +669,7 @@ function SignalCard({ signal, settings }: { signal: Signal; settings: Settings }
   );
 }
 
-// ─── Stats Bar ────────────────────────────────────────────────────────────────
+// ─── Stats Bar ───────────────────────────────────────────────────────────────────────────
 
 function StatsBar() {
   const { data: stats } = useQuery<Stats>({ queryKey: ["/api/stats"] });
@@ -697,7 +697,7 @@ function StatsBar() {
   );
 }
 
-// ─── Trade History ────────────────────────────────────────────────────────────
+// ─── Trade History ──────────────────────────────────────────────────────────────────────────
 
 function TradeHistory({ signals }: { signals: Signal[] }) {
   const traded = signals.filter(s => ["auto_traded", "manually_traded"].includes(s.status));
@@ -730,7 +730,7 @@ function TradeHistory({ signals }: { signals: Signal[] }) {
   );
 }
 
-// ─── Live Scoreboard ────────────────────────────────────────────────────────
+// ─── Live Scoreboard ────────────────────────────────────────────────────────────────────
 
 function ScoreboardRow({ market }: { market: ScoredMarket }) {
   const cfg = TIER_CONFIG[market.tier];
@@ -817,7 +817,10 @@ function LiveScoreboard() {
         {isLoading ? (
           <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-10 rounded-lg bg-muted animate-pulse" />)}</div>
         ) : markets.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">No open soccer markets on Kalshi right now</p>
+          <div className="py-4 text-center space-y-1">
+            <p className="text-xs text-muted-foreground">No open soccer markets on Kalshi right now</p>
+            <p className="text-[10px] text-muted-foreground/60">International break or off-week — check back when league action resumes</p>
+          </div>
         ) : (
           <div className="space-y-1.5">
             {visible.length === 0 && !showCold ? (
@@ -840,7 +843,7 @@ function LiveScoreboard() {
   );
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
+// ─── Dashboard ───────────────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { toast } = useToast();
@@ -903,64 +906,40 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        <StatsBar />
+      <div className="max-w-6xl mx-auto px-4 py-5">
+        <div className="flex flex-col lg:flex-row gap-5">
 
-        {/* Bloat explainer */}
-        <div className="mb-5 p-3 rounded-xl border bg-orange-500/5 border-orange-500/20">
-          <p className="text-xs text-muted-foreground leading-relaxed">
-            <span className="font-medium text-orange-400">Favorite Bloat:</span> Late-game (65'+) tied soccer matches where the pre-game favorite is still priced too high (60–78%).
-            Bet <span className="text-green-400 font-medium">NO</span> (draw/upset), <span className="text-blue-400 font-medium">YES</span> (underdog wins), or both.
-            {isConnected && status?.botEnabled
-              ? <span className="text-green-400 font-medium"> Bot is actively placing bets.</span>
-              : <span className="text-muted-foreground"> Connect API key + enable bot to auto-trade.</span>
-            }
-          </p>
-        </div>
+          {/* Main content */}
+          <div className="flex-1 min-w-0">
 
-        {/* Live Scoreboard */}
-        <LiveScoreboard />
+            {/* Live scoreboard */}
+            <LiveScoreboard />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Signals — left 2 cols */}
-          <div className="lg:col-span-2">
+            {/* Stats */}
+            <StatsBar />
+
+            {/* Signals */}
             <Tabs defaultValue="active">
               <TabsList className="mb-4">
                 <TabsTrigger value="active" data-testid="tab-active">
-                  Active
-                  {activeSignals.length > 0 && (
-                    <Badge className="ml-1.5 h-4 px-1.5 text-[10px] bg-orange-500 text-white">{activeSignals.length}</Badge>
-                  )}
+                  Active Signals <Badge className="ml-1.5 h-4 px-1.5 text-[10px]">{activeSignals.length}</Badge>
                 </TabsTrigger>
-                <TabsTrigger value="history" data-testid="tab-history">Trades</TabsTrigger>
-                <TabsTrigger value="skipped" data-testid="tab-skipped">
-                  Skipped {skippedSignals.length > 0 && `(${skippedSignals.length})`}
-                </TabsTrigger>
+                <TabsTrigger value="history" data-testid="tab-history">Trade History</TabsTrigger>
+                <TabsTrigger value="skipped" data-testid="tab-skipped">Skipped</TabsTrigger>
               </TabsList>
 
               <TabsContent value="active">
                 {isLoading ? (
-                  <div className="space-y-3">{[1, 2].map(i => <div key={i} className="h-48 rounded-xl bg-muted animate-pulse" />)}</div>
+                  <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-40 rounded-xl bg-muted animate-pulse" />)}</div>
                 ) : activeSignals.length === 0 ? (
-                  <div className="text-center py-16 space-y-3">
-                    <div className="text-4xl">⚽</div>
-                    <p className="text-sm font-medium text-muted-foreground">No bloat signals detected</p>
-                    <p className="text-xs text-muted-foreground max-w-xs mx-auto">
-                      Watching Kalshi soccer markets. Signals appear when a late-game favorite is priced too high on a tied match.
-                    </p>
-                    <Button size="sm" variant="outline" onClick={() => manualScan.mutate()} disabled={manualScan.isPending} data-testid="button-scan-empty">
-                      Scan Now
-                    </Button>
+                  <div className="text-center py-16 space-y-2">
+                    <p className="text-4xl">\u26bd</p>
+                    <p className="text-sm font-medium">No active signals</p>
+                    <p className="text-xs text-muted-foreground">The scanner is watching for favorite bloat in live games 65'+</p>
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {activeSignals.map(s => (
-                      <SignalCard key={s.id} signal={s} settings={settings ?? {
-                        minMinute: 65, maxFavoriteProb: 0.78, minFavoriteProb: 0.60,
-                        scanEnabled: true, scanIntervalSec: 60, botEnabled: false,
-                        betMode: "no_only", betAmountDollars: 2, minBloatScore: 40,
-                      }} />
-                    ))}
+                    {settings && activeSignals.map(s => <SignalCard key={s.id} signal={s} settings={settings} />)}
                   </div>
                 )}
               </TabsContent>
@@ -971,13 +950,13 @@ export default function Dashboard() {
 
               <TabsContent value="skipped">
                 {skippedSignals.length === 0 ? (
-                  <div className="text-center py-12 text-sm text-muted-foreground">No skipped signals</div>
+                  <div className="text-center py-12 text-sm text-muted-foreground">No skipped signals yet.</div>
                 ) : (
                   <div className="space-y-2">
                     {skippedSignals.map(s => (
-                      <div key={s.id} className="p-3 rounded-lg border opacity-50 text-sm">
-                        <p className="font-medium truncate">{s.marketTitle}</p>
-                        <p className="text-xs text-muted-foreground">Bloat {s.bloatScore} · {fmtProb(s.favoriteProb)} fav · {fmtTime(s.detectedAt)}</p>
+                      <div key={s.id} className="p-3 rounded-lg border text-sm text-muted-foreground" data-testid={`skipped-${s.id}`}>
+                        <p className="font-medium">{s.marketTitle}</p>
+                        <p className="text-xs">{fmtTime(s.detectedAt)} · Bloat {s.bloatScore}</p>
                       </div>
                     ))}
                   </div>
@@ -986,25 +965,23 @@ export default function Dashboard() {
             </Tabs>
           </div>
 
-          {/* Right panel */}
-          <div className="space-y-4">
-            {!isConnected ? (
-              <CredentialsPanel onConnected={() => {
-                queryClient.invalidateQueries({ queryKey: ["/api/status"] });
-                queryClient.invalidateQueries({ queryKey: ["/api/balance"] });
-              }} />
-            ) : null}
-            <BotPanel />
+          {/* Sidebar */}
+          <div className="w-full lg:w-80 shrink-0">
+            <Tabs defaultValue="bot">
+              <TabsList className="w-full mb-4">
+                <TabsTrigger value="bot" className="flex-1" data-testid="tab-bot">Bot</TabsTrigger>
+                <TabsTrigger value="connect" className="flex-1" data-testid="tab-connect">API Key</TabsTrigger>
+              </TabsList>
+              <TabsContent value="bot"><BotPanel /></TabsContent>
+              <TabsContent value="connect">
+                <CredentialsPanel onConnected={() => {}} />
+              </TabsContent>
+            </Tabs>
           </div>
         </div>
-      </main>
+      </div>
 
-      <footer className="border-t py-4 mt-8">
-        <div className="max-w-6xl mx-auto px-4 flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">Bloat Scout · Trade responsibly</p>
-          <PerplexityAttribution />
-        </div>
-      </footer>
+      <PerplexityAttribution />
     </div>
   );
 }
