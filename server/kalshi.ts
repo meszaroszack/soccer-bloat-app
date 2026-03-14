@@ -6,70 +6,50 @@ export type BetMode = "no" | "yes" | "both";
 
 export interface TeamMarket {
   ticker: string;
-  teamCode: string;   // e.g. "CFC", "NEW", "TIE"
-  label: string;      // e.g. "Chelsea", "Newcastle", "Draw"
-  yesPrice: number;   // probability [0,1]
+  teamCode: string;
+  label: string;
+  yesPrice: number;
   noPrice: number;
 }
 
 export interface PricePoint {
   minute: number;
   favoriteProb: number;
-  ts: number; // unix ms
+  ts: number;
 }
 
 export interface EventSnapshot {
   eventTicker: string;
-  gameTitle: string;       // "Chelsea vs Newcastle"
+  gameTitle: string;
   home: TeamMarket;
   away: TeamMarket;
   draw: TeamMarket;
-  favorite: TeamMarket;    // home or away with highest yesPrice
-  favoriteProb: number;    // 0–1
-  minute: number;          // estimated elapsed game minute (0 if pre-game)
+  favorite: TeamMarket;
+  favoriteProb: number;
+  minute: number;
   isLive: boolean;
-  kickoffTime: number | null; // unix ms, null if unknown
-  bloatScore: number;      // 0–100
+  kickoffTime: number | null;
+  bloatScore: number;
   tier: "bet" | "watch" | "early" | "cold";
-  priceHistory: PricePoint[]; // up to 60 points
+  priceHistory: PricePoint[];
 }
 
 // ─── Ticker / URL Parsing ─────────────────────────────────────────────────────
 
-/**
- * Accepts:
- *   • Full Kalshi URL:  https://kalshi.com/markets/kxeplgame-26mar14cfcnew/chelsea-wins
- *   • Short market ticker: KXEPLGAME-26MAR14CFCNEW-CFC
- *   • Event ticker:        KXEPLGAME-26MAR14CFCNEW
- *
- * Returns the event ticker (uppercase, 2-segment, no team suffix), or null.
- */
 export function parseEventTicker(input: string): string | null {
   try {
     let raw = input.trim();
-
-    // If it looks like a URL, extract the path segment after /markets/
     if (raw.startsWith("http")) {
       const url = new URL(raw);
       const parts = url.pathname.split("/").filter(Boolean);
       const idx = parts.indexOf("markets");
       if (idx === -1 || idx + 1 >= parts.length) return null;
-      raw = parts[idx + 1]; // e.g. "kxeplgame-26mar14cfcnew"
+      raw = parts[idx + 1];
     }
-
-    // Uppercase
     raw = raw.toUpperCase();
-
-    // Split by dash — event tickers have exactly 2 segments, market tickers 3
     const segments = raw.split("-");
-    if (segments.length === 3) {
-      // Drop the 3rd segment (team code), keep first 2
-      return `${segments[0]}-${segments[1]}`;
-    }
-    if (segments.length === 2) {
-      return raw;
-    }
-
+    if (segments.length === 3) return `${segments[0]}-${segments[1]}`;
+    if (segments.length === 2) return raw;
     return null;
   } catch {
     return null;
@@ -79,40 +59,56 @@ export function parseEventTicker(input: string): string | null {
 // ─── Kalshi API helpers ───────────────────────────────────────────────────────
 
 const BASE_URL = "https://api.elections.kalshi.com/trade-api/v2";
+// The path prefix included in the signature string (per Kalshi docs)
+const API_PREFIX = "/trade-api/v2";
 
-async function kalshiGet(path: string, apiKeyId?: string, privateKeyPem?: string): Promise<any> {
+/**
+ * Build the RSA-PSS SHA256 signature.
+ * Kalshi requires: base64(RSA-PSS-SHA256( timestamp + METHOD + /trade-api/v2 + pathWithoutQuery ))
+ */
+function buildSignature(privateKeyPem: string, timestampMs: string, method: string, routePath: string): string {
+  // routePath is e.g. "/portfolio/balance" or "/markets"
+  const pathOnly = routePath.split("?")[0];
+  const msgString = timestampMs + method + API_PREFIX + pathOnly;
+
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(msgString);
+  sign.end();
+  const signature = sign.sign({
+    key: privateKeyPem,
+    padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+  });
+  return signature.toString("base64");
+}
+
+async function kalshiGet(routePath: string, apiKeyId?: string, privateKeyPem?: string): Promise<any> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
 
   if (apiKeyId && privateKeyPem) {
     const ts = Date.now().toString();
-    const msg = ts + "GET" + path.split("?")[0];
-    const key = crypto.createPrivateKey(privateKeyPem);
-    const sig = crypto.sign("sha256", Buffer.from(msg), { key, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST });
     headers["KALSHI-ACCESS-KEY"] = apiKeyId;
     headers["KALSHI-ACCESS-TIMESTAMP"] = ts;
-    headers["KALSHI-ACCESS-SIGNATURE"] = sig.toString("base64");
+    headers["KALSHI-ACCESS-SIGNATURE"] = buildSignature(privateKeyPem, ts, "GET", routePath);
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, { headers });
+  const res = await fetch(`${BASE_URL}${routePath}`, { headers });
   if (!res.ok) throw new Error(`Kalshi API ${res.status}: ${await res.text()}`);
   return res.json();
 }
 
-async function kalshiPost(path: string, body: object, apiKeyId: string, privateKeyPem: string): Promise<any> {
+async function kalshiPost(routePath: string, body: object, apiKeyId: string, privateKeyPem: string): Promise<any> {
   const ts = Date.now().toString();
-  const pathOnly = path.split("?")[0];
-  const msg = ts + "POST" + pathOnly;
-  const key = crypto.createPrivateKey(privateKeyPem);
-  const sig = crypto.sign("sha256", Buffer.from(msg), { key, padding: crypto.constants.RSA_PKCS1_PSS_PADDING, saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "KALSHI-ACCESS-KEY": apiKeyId,
+    "KALSHI-ACCESS-TIMESTAMP": ts,
+    "KALSHI-ACCESS-SIGNATURE": buildSignature(privateKeyPem, ts, "POST", routePath),
+  };
 
-  const res = await fetch(`${BASE_URL}${path}`, {
+  const res = await fetch(`${BASE_URL}${routePath}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "KALSHI-ACCESS-KEY": apiKeyId,
-      "KALSHI-ACCESS-TIMESTAMP": ts,
-      "KALSHI-ACCESS-SIGNATURE": sig.toString("base64"),
-    },
+    headers,
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Kalshi API ${res.status}: ${await res.text()}`);
@@ -122,7 +118,6 @@ async function kalshiPost(path: string, body: object, apiKeyId: string, privateK
 // ─── Timing ───────────────────────────────────────────────────────────────────
 
 export function getKickoffTime(market: any): number | null {
-  // expected_expiration_time ≈ end of match = kickoff + 2h
   const exp = market.expected_expiration_time ?? market.expiration_time;
   if (!exp) return null;
   return new Date(exp).getTime() - 2 * 60 * 60 * 1000;
@@ -153,43 +148,25 @@ function scoreTier(score: number, minute: number, isLive: boolean): "bet" | "wat
   return "early";
 }
 
-// ─── Team label extraction ────────────────────────────────────────────────────
-
-function labelFromTicker(ticker: string): string {
-  // ticker format: KXEPLGAME-26MAR14CFCNEW-CFC
-  // We use the team code as a fallback; the market's title field is better if present
-  const parts = ticker.split("-");
-  return parts[parts.length - 1] ?? ticker;
-}
-
 // ─── Main snapshot fetch ──────────────────────────────────────────────────────
 
 export async function fetchEventSnapshot(
   eventTicker: string,
   priorHistory: PricePoint[] = []
 ): Promise<EventSnapshot> {
-  // Fetch all open markets for this event
   const data = await kalshiGet(`/markets?event_ticker=${encodeURIComponent(eventTicker)}&status=open&limit=10`);
   const markets: any[] = data.markets ?? [];
 
   if (markets.length === 0) {
-    // Try without status filter — game may be settled
     const data2 = await kalshiGet(`/markets?event_ticker=${encodeURIComponent(eventTicker)}&limit=10`);
     markets.push(...(data2.markets ?? []));
   }
 
   if (markets.length === 0) throw new Error(`No markets found for event ${eventTicker}`);
 
-  // Identify home, away, draw by market ticker suffix
-  // The 3rd segment of a market ticker is the team code
   let home: TeamMarket | null = null;
   let away: TeamMarket | null = null;
   let draw: TeamMarket | null = null;
-
-  // Extract the 2-char team codes from the event ticker itself
-  // Event ticker: KXEPLGAME-26MAR14CFCNEW → last part "CFCNEW" = home "CFC" + away "NEW"
-  const eventParts = eventTicker.split("-");
-  const teamsStr = eventParts[eventParts.length - 1] ?? ""; // e.g. "CFCNEW"
 
   for (const m of markets) {
     const segments = (m.ticker as string).split("-");
@@ -197,7 +174,6 @@ export async function fetchEventSnapshot(
     const yesPrice = parseFloat(m.yes_bid ?? m.last_price ?? "0.5") || 0.5;
     const noPrice = parseFloat(m.no_bid ?? "0") || (1 - yesPrice);
     const label = m.subtitle ?? m.title ?? teamCode;
-
     const tm: TeamMarket = { ticker: m.ticker, teamCode, label, yesPrice, noPrice };
 
     if (teamCode === "TIE" || teamCode === "DRAW") {
@@ -209,7 +185,7 @@ export async function fetchEventSnapshot(
     }
   }
 
-  // Fallback: if we couldn't classify, use position
+  // Fallbacks
   if (!home && markets[0]) {
     const m = markets[0];
     const teamCode = m.ticker.split("-").pop() ?? "";
@@ -226,32 +202,25 @@ export async function fetchEventSnapshot(
     draw = { ticker: m.ticker, teamCode, label: m.subtitle ?? teamCode, yesPrice: parseFloat(m.yes_bid ?? "0.5") || 0.5, noPrice: parseFloat(m.no_bid ?? "0.5") || 0.5 };
   }
 
-  // Ensure draw has a sensible label
   if (draw && (draw.label === "TIE" || draw.label === draw.teamCode)) {
     draw = { ...draw, label: "Draw" };
   }
 
-  // Determine favorite
   const candidates = [home, away].filter(Boolean) as TeamMarket[];
   const favorite = candidates.reduce((a, b) => (a.yesPrice >= b.yesPrice ? a : b), candidates[0]);
   const favoriteProb = favorite?.yesPrice ?? 0;
 
-  // Timing
   const firstMarket = markets[0];
   const kickoffTime = getKickoffTime(firstMarket);
   const minute = estimateMinute(kickoffTime);
   const isLive = kickoffTime !== null && minute >= 0 && minute <= 115;
 
-  // Bloat score
   const bloatScore = calculateBloatScore(favoriteProb, minute);
   const tier = scoreTier(bloatScore, minute, isLive);
 
-  // Game title from event subtitle or market titles
   const rawTitle = firstMarket?.event_title ?? firstMarket?.title ?? eventTicker;
-  // Normalise "Chelsea FC wins" → try to make it "Chelsea vs Newcastle"
   const gameTitle = rawTitle.includes(" vs ") ? rawTitle : `${home?.label ?? "Home"} vs ${away?.label ?? "Away"}`;
 
-  // Price history — append current point, keep last 60
   const now = Date.now();
   const newPoint: PricePoint = { minute, favoriteProb, ts: now };
   const history = [...priorHistory, newPoint].slice(-60);
@@ -287,7 +256,6 @@ export async function placeBloatBet(
   const orders: any[] = [];
 
   if (betMode === "no" || betMode === "both") {
-    // Bet NO on the favourite — compression bet
     const order = await kalshiPost("/portfolio/orders", {
       ticker,
       action: "buy",
@@ -300,7 +268,6 @@ export async function placeBloatBet(
   }
 
   if (betMode === "yes" || betMode === "both") {
-    // Bet YES (contrarian)
     const order = await kalshiPost("/portfolio/orders", {
       ticker,
       action: "buy",
