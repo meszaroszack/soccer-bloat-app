@@ -4,6 +4,7 @@ import { store, setCreds, clearCreds, hasCreds, setLastValidatedAt, getLastValid
 import { testCredentials } from "./kalshi";
 import { runScan, startScanner, stopScanner, scannerStatus } from "./scanner";
 import { confirmSignal, skipSignal, watchSignal, getBotStatus } from "./bot";
+import { refreshAccountSnapshot, getPositionsView } from "./account";
 import { manualRefresh } from "./perplexity";
 import { getDriftResearchData } from "./openingTracker";
 
@@ -115,11 +116,10 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     setLastValidatedAt(Date.now());
     console.log("[creds] credentials saved and validated. Balance cents:", result.balance);
 
-    // Immediately hydrate account snapshot in background
-    const { refreshAccountSnapshot, getAccountSnapshot, getPositionsView } = await import("./account");
+    // Immediately hydrate account snapshot
     const snap = await refreshAccountSnapshot(true).catch((e) => {
       console.warn("[creds] post-save account refresh failed:", e.message);
-      return getAccountSnapshot();
+      return refreshAccountSnapshot();
     });
     const positions = getPositionsView();
 
@@ -139,8 +139,7 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     if (!hasCreds()) {
       return res.status(400).json({ error: "No credentials configured" });
     }
-    const { refreshAccountSnapshot, getAccountSnapshot, getPositionsView } = await import("./account");
-    const snap = await refreshAccountSnapshot(true).catch(() => getAccountSnapshot());
+    const snap = await refreshAccountSnapshot(true);
     const positions = getPositionsView();
     const lastValidatedAt = getLastValidatedAt();
     res.json({
@@ -320,19 +319,16 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
 
   // Account routes
   app.get("/api/account/summary", async (_req, res) => {
-    const { refreshAccountSnapshot, getAccountSnapshot } = await import("./account");
-    await refreshAccountSnapshot();
-    res.json(getAccountSnapshot());
+    const snap = await refreshAccountSnapshot();
+    res.json(snap);
   });
 
   app.post("/api/account/refresh", async (_req, res) => {
-    const { refreshAccountSnapshot, getAccountSnapshot } = await import("./account");
-    await refreshAccountSnapshot(true);
-    res.json(getAccountSnapshot());
+    const snap = await refreshAccountSnapshot(true);
+    res.json(snap);
   });
 
   app.get("/api/account/positions", async (_req, res) => {
-    const { refreshAccountSnapshot, getPositionsView } = await import("./account");
     await refreshAccountSnapshot();
     res.json({ positions: getPositionsView(), lastUpdatedTs: new Date().toISOString() });
   });

@@ -68,6 +68,70 @@ export async function getBalance(apiKeyId: string, privateKeyPem: string): Promi
   return data.balance?.available_balance_cents ?? 0;
 }
 
+/**
+ * Returns the full balance response from Kalshi for field-safe mapping.
+ * Kalshi /portfolio/balance response shape (verified):
+ * { balance: {
+ *     available_balance_cents: number,      // integer cents
+ *     portfolio_value_cents:   number,      // integer cents
+ *     total_value_cents:       number,      // integer cents
+ *     updated_ts?:             string,
+ *   }
+ * }
+ */
+export async function getBalanceRaw(
+  apiKeyId: string,
+  privateKeyPem: string,
+): Promise<{
+  balanceCents: number;
+  portfolioValueCents: number;
+  totalValueCents: number;
+  lastUpdatedTs: string;
+}> {
+  const data = await kalshiGet("/portfolio/balance", apiKeyId, privateKeyPem);
+  // Kalshi wraps the balance object under the key "balance"
+  const b = data?.balance ?? data ?? {};
+
+  // Fields may be numbers or numeric strings — handle both
+  const toInt = (v: any): number => {
+    if (v == null) return 0;
+    const n = typeof v === "number" ? v : parseInt(String(v), 10);
+    return isNaN(n) ? 0 : n;
+  };
+
+  return {
+    balanceCents:        toInt(b.available_balance_cents),
+    portfolioValueCents: toInt(b.portfolio_value_cents),
+    totalValueCents:     toInt(b.total_value_cents ?? b.available_balance_cents),
+    lastUpdatedTs:       b.updated_ts ?? new Date().toISOString(),
+  };
+}
+
+/**
+ * Fetches all market positions with cursor-based pagination.
+ * Propagates errors — does NOT swallow them silently.
+ */
+export async function getPositionsRaw(
+  apiKeyId: string,
+  privateKeyPem: string,
+): Promise<any[]> {
+  const all: any[] = [];
+  let cursor: string | undefined;
+  let page = 0;
+  while (page < 20) {
+    const qs = new URLSearchParams({ limit: "100", status: "all" });
+    if (cursor) qs.set("cursor", cursor);
+    const data = await kalshiGet(`/portfolio/positions?${qs}`, apiKeyId, privateKeyPem);
+    // Kalshi wraps under market_positions or positions
+    const positions: any[] = data.market_positions ?? data.positions ?? [];
+    all.push(...positions);
+    cursor = data.cursor ?? data.next_cursor;
+    page++;
+    if (!cursor || positions.length === 0) break;
+  }
+  return all;
+}
+
 export async function testCredentials(
   apiKeyId: string,
   privateKeyPem: string,

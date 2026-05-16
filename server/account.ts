@@ -1,4 +1,4 @@
-import { kalshiGet } from "./kalshi";
+import { getBalanceRaw, getPositionsRaw } from "./kalshi";
 import { getCreds } from "./storage";
 
 export interface AccountSnapshot {
@@ -31,37 +31,78 @@ export interface PositionView {
   league?: string;
 }
 
+// ── In-memory cache ───────────────────────────────────────────────────────────
 let _snapshot: AccountSnapshot | null = null;
-let _lastGoodSnapshot: AccountSnapshot | null = null; // preserved across transient errors
+let _lastGoodSnapshot: AccountSnapshot | null = null;
 let _positions: PositionView[] = [];
 let _lastGoodPositions: PositionView[] = [];
 let _lastRefresh = 0;
-const CACHE_MS = 45_000;
+const CACHE_MS = 30_000; // 30s cache
 
-async function fetchBalanceRaw(apiKeyId: string, pem: string): Promise<any> {
-  return kalshiGet("/portfolio/balance", apiKeyId, pem);
+// ── Position field helpers ────────────────────────────────────────────────────
+// Kalshi market_positions fields (verified from API docs):
+//   market_position.ticker
+//   market_position.event_ticker
+//   market_position.market_title
+//   market_position.position          → net YES shares (signed int; negative = net NO)
+//   market_position.realized_pnl      → cents integer (can be negative)
+//   market_position.fees_paid         → cents integer
+//   market_position.market_exposure_cents → cents integer (absolute value of exposure)
+//   market_position.total_traded_cents → cents integer
+//   market_position.last_updated_ts
+//
+// NOTE: there is no separate yes_position / no_position field.
+// A positive `position` value = net YES shares.
+// A negative `position` value = net NO shares.
+
+function toInt(v: any): number {
+  if (v == null) return 0;
+  const n = typeof v === "number" ? v : parseInt(String(v), 10);
+  return isNaN(n) ? 0 : n;
 }
 
-async function fetchPositionsRaw(apiKeyId: string, pem: string): Promise<any[]> {
-  const all: any[] = [];
-  let cursor: string | undefined;
-  let page = 0;
-  while (page < 10) {
-    const qs = new URLSearchParams({ limit: "100" });
-    if (cursor) qs.set("cursor", cursor);
-    const data = await kalshiGet(`/portfolio/positions?${qs}`, apiKeyId, pem);
-    const positions = data.market_positions ?? data.positions ?? [];
-    all.push(...positions);
-    cursor = data.cursor;
-    page++;
-    if (!cursor || positions.length === 0) break;
-  }
-  return all;
+function mapPosition(p: any): PositionView | null {
+  // position is the signed net share count
+  const netPosition = toInt(p.position);
+  if (netPosition === 0) return null; // skip flat positions
+
+  const posYes = netPosition > 0 ? netPosition : 0;
+  const posNo  = netPosition < 0 ? Math.abs(netPosition) : 0;
+  const shares = Math.abs(netPosition);
+
+  const realizedPnlCents       = toInt(p.realized_pnl);
+  const feesCents               = toInt(p.fees_paid);
+  const exposureCents           = toInt(p.market_exposure_cents);
+  const totalTradedCents        = toInt(p.total_traded_cents);
+
+  const side: PositionView["side"] =
+    posYes > 0 && posNo > 0 ? "both"
+    : posYes > 0 ? "yes"
+    : posNo  > 0 ? "no"
+    : "unknown";
+
+  return {
+    eventTicker:          p.event_ticker   ?? "",
+    ticker:               p.ticker         ?? "",
+    marketTitle:          p.market_title   ?? p.ticker ?? "",
+    side,
+    positionYes:          posYes,
+    positionNo:           posNo,
+    positionShares:       shares,
+    marketExposureDollars: exposureCents / 100,
+    totalTradedDollars:   totalTradedCents / 100,
+    realizedPnlDollars:   realizedPnlCents / 100,
+    feesPaidDollars:      feesCents / 100,
+    lastUpdatedTs:        p.last_updated_ts ?? new Date().toISOString(),
+  };
 }
 
-/** Refresh and return the snapshot (so callers can get data immediately). */
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/** Force-refresh or serve from cache. Returns the new snapshot. */
 export async function refreshAccountSnapshot(force = false): Promise<AccountSnapshot> {
   const creds = getCreds();
+
   if (!creds) {
     const snap: AccountSnapshot = {
       connected: false,
@@ -73,7 +114,7 @@ export async function refreshAccountSnapshot(force = false): Promise<AccountSnap
       openPositionsCount: 0,
       realizedPnlDollars: 0,
       lastUpdatedTs: new Date().toISOString(),
-      error: "No credentials configured",
+      error: "No Kalshi credentials configured.",
     };
     _snapshot = snap;
     _positions = [];
@@ -81,63 +122,41 @@ export async function refreshAccountSnapshot(force = false): Promise<AccountSnap
     return snap;
   }
 
-  if (!force && Date.now() - _lastRefresh < CACHE_MS) return getAccountSnapshot();
+  const now = Date.now();
+  if (!force && _lastRefresh > 0 && now - _lastRefresh < CACHE_MS) {
+    console.log(`[account] serving cached snapshot (age ${Math.round((now - _lastRefresh) / 1000)}s)`);
+    return getAccountSnapshot();
+  }
 
   console.log(`[account] refreshing snapshot (force=${force})`);
+
   try {
-    const [balRaw, posRaw] = await Promise.all([
-      fetchBalanceRaw(creds.apiKeyId, creds.privateKeyPem),
-      fetchPositionsRaw(creds.apiKeyId, creds.privateKeyPem).catch((e) => {
-        console.warn("[account] positions fetch failed:", e.message);
-        return [];
+    // Fetch balance and positions concurrently.
+    // Positions failure is non-fatal; balance failure aborts.
+    const [bal, posRaw] = await Promise.all([
+      getBalanceRaw(creds.apiKeyId, creds.privateKeyPem),
+      getPositionsRaw(creds.apiKeyId, creds.privateKeyPem).catch((e) => {
+        console.warn("[account] positions fetch failed (non-fatal):", e.message);
+        return [] as any[];
       }),
     ]);
 
-    const bal = balRaw.balance ?? {};
-    const balanceCents = Math.round(parseFloat(bal.available_balance_cents ?? bal.balance ?? "0") || 0);
-    const portfolioValueCents = Math.round(parseFloat(bal.portfolio_value_cents ?? "0") || 0);
+    console.log(
+      `[account] balance fetched: ${bal.balanceCents}¢ available, ${bal.portfolioValueCents}¢ portfolio`,
+    );
+    console.log(`[account] raw positions count: ${posRaw.length}`);
 
+    // Map positions — skip zero-net positions
     const openPos: PositionView[] = [];
     let totalExposure = 0;
     let totalRealizedPnl = 0;
 
     for (const p of posRaw) {
-      const posYes = parseFloat(p.position ?? p.yes_position ?? "0") || 0;
-      const posNo = parseFloat(p.no_position ?? "0") || 0;
-      const totalPos = Math.abs(posYes) + Math.abs(posNo);
-      if (totalPos === 0) continue;
-
-      const realizedPnl = parseFloat(p.realized_pnl ?? "0") || 0;
-      const fees = parseFloat(p.fees_paid ?? "0") || 0;
-      const exposure = (parseFloat(p.market_exposure_cents ?? "0") || 0) / 100;
-      const totalTraded = (parseFloat(p.total_traded_cents ?? "0") || 0) / 100;
-
-      totalExposure += Math.abs(exposure);
-      totalRealizedPnl += realizedPnl / 100;
-
-      const side: PositionView["side"] =
-        posYes > 0 && posNo > 0
-          ? "both"
-          : posYes > 0
-            ? "yes"
-            : posNo > 0
-              ? "no"
-              : "unknown";
-
-      openPos.push({
-        eventTicker: p.event_ticker ?? "",
-        ticker: p.ticker ?? "",
-        marketTitle: p.market_title ?? p.ticker ?? "",
-        side,
-        positionYes: posYes,
-        positionNo: posNo,
-        positionShares: totalPos,
-        marketExposureDollars: exposure,
-        totalTradedDollars: totalTraded,
-        realizedPnlDollars: realizedPnl / 100,
-        feesPaidDollars: fees / 100,
-        lastUpdatedTs: p.last_updated_ts ?? new Date().toISOString(),
-      });
+      const view = mapPosition(p);
+      if (!view) continue;
+      openPos.push(view);
+      totalExposure  += Math.abs(view.marketExposureDollars);
+      totalRealizedPnl += view.realizedPnlDollars;
     }
 
     _positions = openPos;
@@ -146,24 +165,30 @@ export async function refreshAccountSnapshot(force = false): Promise<AccountSnap
 
     const snap: AccountSnapshot = {
       connected: true,
-      balanceCents,
-      portfolioValueCents,
-      balanceDollars: balanceCents / 100,
-      portfolioValueDollars: portfolioValueCents / 100,
+      balanceCents:        bal.balanceCents,
+      portfolioValueCents: bal.portfolioValueCents,
+      balanceDollars:      bal.balanceCents / 100,
+      portfolioValueDollars: bal.portfolioValueCents / 100,
       openExposureDollars: totalExposure,
-      openPositionsCount: openPos.length,
-      realizedPnlDollars: totalRealizedPnl,
-      lastUpdatedTs: new Date().toISOString(),
+      openPositionsCount:  openPos.length,
+      realizedPnlDollars:  totalRealizedPnl,
+      lastUpdatedTs:       bal.lastUpdatedTs,
     };
     _snapshot = snap;
     _lastGoodSnapshot = snap;
-    console.log(`[account] snapshot OK — balance $${snap.balanceDollars.toFixed(2)}, ${openPos.length} positions`);
+
+    console.log(
+      `[account] snapshot OK — balance $${snap.balanceDollars.toFixed(2)}, ` +
+      `portfolio $${snap.portfolioValueDollars.toFixed(2)}, ` +
+      `${openPos.length} open positions`,
+    );
     return snap;
+
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
     console.error("[account] refresh failed:", errMsg);
 
-    // Keep last known good data, but annotate with error
+    // Serve last known good data with error annotation rather than zeroing out
     if (_lastGoodSnapshot) {
       const degraded: AccountSnapshot = {
         ..._lastGoodSnapshot,
@@ -212,4 +237,9 @@ export function getAccountSnapshot(): AccountSnapshot {
 
 export function getPositionsView(): PositionView[] {
   return _positions;
+}
+
+/** Call after a trade is placed to immediately bust the cache and re-fetch. */
+export function invalidateAccountCache(): void {
+  _lastRefresh = 0;
 }
