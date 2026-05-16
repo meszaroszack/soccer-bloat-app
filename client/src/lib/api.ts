@@ -25,6 +25,8 @@ export const api = {
   clearCredentials: () => req<any>("/api/credentials", { method: "DELETE" }),
 
   getScannerStatus: () => req<any>("/api/scanner/status"),
+  getScanHealth: () => req<any>("/api/scan/health"),
+  getAnalyticsSummary: () => req<any>("/api/analytics/summary"),
   triggerScan: () => req<any>("/api/scanner/run", { method: "POST" }),
 
   getEvents: (params?: Record<string, string>) => {
