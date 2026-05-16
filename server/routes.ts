@@ -252,4 +252,66 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     if (!report) return res.status(500).json({ error: "Failed to generate report" });
     res.json({ success: true, report });
   });
+
+  app.get("/api/intelligence/daily-report", (_req, res) => {
+    const report = store.getTodayReport();
+    if (!report) {
+      return res.json({ available: false, hasKey: !!process.env.PERPLEXITY_API_KEY });
+    }
+    res.json({ available: true, report });
+  });
+
+  // Account routes
+  app.get("/api/account/summary", async (_req, res) => {
+    const { refreshAccountSnapshot, getAccountSnapshot } = await import("./account");
+    await refreshAccountSnapshot();
+    res.json(getAccountSnapshot());
+  });
+
+  app.post("/api/account/refresh", async (_req, res) => {
+    const { refreshAccountSnapshot, getAccountSnapshot } = await import("./account");
+    await refreshAccountSnapshot(true);
+    res.json(getAccountSnapshot());
+  });
+
+  app.get("/api/account/positions", async (_req, res) => {
+    const { refreshAccountSnapshot, getPositionsView } = await import("./account");
+    await refreshAccountSnapshot();
+    res.json({ positions: getPositionsView(), lastUpdatedTs: new Date().toISOString() });
+  });
+
+  // Bot additional routes
+  app.post("/api/bot/confirm/:id", async (req, res) => {
+    const result = await confirmSignal(req.params.id);
+    if (!result.success) return res.status(400).json(result);
+    res.json(result);
+  });
+
+  app.post("/api/bot/dismiss/:id", (req, res) => {
+    skipSignal(req.params.id);
+    res.json({ dismissed: true });
+  });
+
+  app.get("/api/bot/pending", (_req, res) => {
+    res.json(store.getPendingConfirmations());
+  });
+
+  // Signals additional action
+  app.post("/api/signals/:id/trade", async (req, res) => {
+    const result = await confirmSignal(req.params.id);
+    if (!result.success) return res.status(400).json(result);
+    res.json(result);
+  });
+
+  // Analytics alias
+  app.get("/api/analytics/top-opportunities", (req, res) => {
+    const { date } = req.query;
+    const today = new Date().toISOString().slice(0, 10);
+    const d = (date as string) ?? today;
+    const opps = store
+      .getDailyOpportunities(d)
+      .sort((a, b) => a.rank - b.rank)
+      .slice(0, 20);
+    res.json(opps);
+  });
 }

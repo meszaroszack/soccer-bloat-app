@@ -202,3 +202,33 @@ export interface BotStatus {
   totalManualTrades: number;
   totalSkipped: number;
 }
+
+export interface AccountSnapshot {
+  connected: boolean;
+  balanceCents: number;
+  portfolioValueCents: number;
+  balanceDollars: number;
+  portfolioValueDollars: number;
+  openExposureDollars: number;
+  openPositionsCount: number;
+  realizedPnlDollars: number;
+  lastUpdatedTs: string;
+  error?: string;
+}
+
+export interface PositionView {
+  eventTicker: string;
+  ticker: string;
+  marketTitle: string;
+  side: "yes" | "no" | "both" | "unknown";
+  positionYes: number;
+  positionNo: number;
+  positionShares: number;
+  marketExposureDollars: number;
+  totalTradedDollars: number;
+  realizedPnlDollars: number;
+  feesPaidDollars: number;
+  lastUpdatedTs: string;
+  sport?: string;
+  league?: string;
+}
