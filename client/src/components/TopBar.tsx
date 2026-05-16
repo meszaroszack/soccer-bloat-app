@@ -2,10 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { Tab } from "../App";
 
-const tabs: Array<{ id: Tab; label: string }> = [
+const TABS: Array<{ id: Tab; label: string }> = [
   { id: "markets", label: "LIVE MARKETS" },
   { id: "signals", label: "SIGNALS" },
-  { id: "bot", label: "BOT" },
+  { id: "account", label: "BOT / ACCOUNT" },
   { id: "analytics", label: "ANALYTICS" },
   { id: "intelligence", label: "INTELLIGENCE" },
   { id: "settings", label: "SETTINGS" },
@@ -22,36 +22,35 @@ export function TopBar({ activeTab, onTabChange }: Props) {
     queryFn: api.getScanHealth,
     refetchInterval: 8000,
   });
-
   const { data: summary } = useQuery({
     queryKey: ["analytics-summary"],
     queryFn: api.getAnalyticsSummary,
     refetchInterval: 15000,
   });
+  const { data: account } = useQuery({
+    queryKey: ["account-summary"],
+    queryFn: api.getAccountSummary,
+    refetchInterval: 60000,
+  });
 
-  const status = health?.status ?? "stopped";
+  const hStatus = health?.status ?? "stopped";
   const dotColor =
-    status === "healthy"
+    hStatus === "healthy"
       ? "var(--green)"
-      : status === "degraded" || status === "no_data"
+      : hStatus === "degraded" || hStatus === "no_data"
         ? "var(--amber)"
         : "var(--red)";
   const statusLabel =
-    status === "healthy"
-      ? "SCANNING"
-      : status === "degraded"
+    hStatus === "healthy"
+      ? "LIVE"
+      : hStatus === "degraded"
         ? "DEGRADED"
-        : status === "no_data"
+        : hStatus === "no_data"
           ? "NO DATA"
           : "IDLE";
-
-  const lastScanAge = health?.lastScanAgeSeconds;
+  const age = health?.lastScanAgeSeconds;
   const ageStr =
-    lastScanAge == null
-      ? "—"
-      : lastScanAge < 60
-        ? `${lastScanAge}s ago`
-        : `${Math.round(lastScanAge / 60)}m ago`;
+    age == null ? "—" : age < 60 ? `${age}s` : `${Math.round(age / 60)}m`;
 
   return (
     <header
@@ -59,10 +58,11 @@ export function TopBar({ activeTab, onTabChange }: Props) {
         borderBottom: "1px solid var(--border-dim)",
         background: "var(--bg-panel)",
         display: "flex",
-        alignItems: "center",
+        alignItems: "stretch",
         position: "sticky",
         top: 0,
         zIndex: 50,
+        height: 48,
         flexShrink: 0,
       }}
     >
@@ -71,27 +71,26 @@ export function TopBar({ activeTab, onTabChange }: Props) {
           padding: "0 18px",
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: 9,
           borderRight: "1px solid var(--border-dim)",
-          height: 48,
           flexShrink: 0,
         }}
       >
         <div
           style={{
-            width: 7,
-            height: 7,
+            width: 6,
+            height: 6,
             borderRadius: 1,
             background: "var(--cyan)",
-            boxShadow: "0 0 8px var(--cyan)",
+            boxShadow: "0 0 8px var(--cyan-dim)",
           }}
         />
         <span
           style={{
             fontFamily: "var(--mono)",
             fontWeight: 700,
-            letterSpacing: "0.16em",
-            fontSize: 12,
+            letterSpacing: "0.18em",
+            fontSize: 11,
             color: "var(--cyan)",
           }}
         >
@@ -100,24 +99,25 @@ export function TopBar({ activeTab, onTabChange }: Props) {
       </div>
 
       <nav style={{ display: "flex", flex: 1 }}>
-        {tabs.map((t) => (
+        {TABS.map((t) => (
           <button
             key={t.id}
             onClick={() => onTabChange(t.id)}
             style={{
-              height: 48,
-              padding: "0 16px",
+              height: "100%",
+              padding: "0 14px",
               background: "none",
               border: "none",
               borderBottom:
                 activeTab === t.id ? "2px solid var(--cyan)" : "2px solid transparent",
-              color: activeTab === t.id ? "var(--cyan)" : "var(--text-secondary)",
+              color: activeTab === t.id ? "var(--cyan)" : "var(--text-dim)",
               fontFamily: "var(--mono)",
-              fontSize: 11,
-              fontWeight: 600,
+              fontSize: 10,
+              fontWeight: 700,
               letterSpacing: "0.1em",
               cursor: "pointer",
-              transition: "color 0.15s",
+              transition: "color 0.12s",
+              whiteSpace: "nowrap",
             }}
           >
             {t.label}
@@ -127,62 +127,61 @@ export function TopBar({ activeTab, onTabChange }: Props) {
 
       <div
         style={{
-          padding: "0 16px",
+          padding: "0 14px",
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: 10,
           fontFamily: "var(--mono)",
           fontSize: 10,
-          color: "var(--text-secondary)",
           borderLeft: "1px solid var(--border-dim)",
-          height: 48,
           flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div
             style={{
               width: 6,
               height: 6,
               borderRadius: "50%",
               background: dotColor,
-              boxShadow: status === "healthy" ? `0 0 6px ${dotColor}` : "none",
-              animation: status === "healthy" ? "pulse-green 2s ease-in-out infinite" : "none",
+              boxShadow: hStatus === "healthy" ? `0 0 6px ${dotColor}` : "none",
+              animation: hStatus === "healthy" ? "pulse-green 2s ease-in-out infinite" : "none",
             }}
           />
-          <span style={{ color: dotColor, letterSpacing: "0.08em" }}>{statusLabel}</span>
+          <span style={{ color: dotColor, letterSpacing: "0.06em" }}>{statusLabel}</span>
         </div>
+
+        <span style={{ color: "var(--border-active)" }}>|</span>
 
         {summary && (
           <>
-            <div style={{ width: 1, height: 14, background: "var(--border-dim)" }} />
             <span style={{ color: "var(--text-dim)" }}>
-              {summary.eventsTracked}{" "}
-              <span style={{ color: "var(--text-secondary)" }}>EVT</span>
+              <span style={{ color: "var(--text-secondary)" }}>{summary.eventsTracked}</span> EVT
             </span>
-            <span style={{ color: "var(--text-dim)" }}>
-              {summary.signalsPending}{" "}
-              <span
-                style={{
-                  color: summary.signalsPending > 0 ? "var(--amber)" : "var(--text-secondary)",
-                }}
-              >
-                PEND
+            {summary.signalsPending > 0 && (
+              <span style={{ color: "var(--amber)", fontWeight: 700 }}>
+                {summary.signalsPending} PEND
               </span>
-            </span>
+            )}
+          </>
+        )}
+
+        {account?.connected && (
+          <>
+            <span style={{ color: "var(--border-active)" }}>|</span>
             <span style={{ color: "var(--text-dim)" }}>
-              {summary.topOpportunitiesToday}{" "}
-              <span style={{ color: "var(--text-secondary)" }}>OPP</span>
+              <span style={{ color: "var(--green)", fontWeight: 600 }}>
+                ${account.balanceDollars?.toFixed(2)}
+              </span>
             </span>
           </>
         )}
 
-        <div style={{ width: 1, height: 14, background: "var(--border-dim)" }} />
-        <span style={{ color: "var(--text-dim)" }}>LAST {ageStr}</span>
-
         {health?.errorCount > 0 && (
-          <span style={{ color: "var(--red)", fontWeight: 600 }}>{health.errorCount} ERR</span>
+          <span style={{ color: "var(--red)", fontWeight: 700 }}>{health.errorCount} ERR</span>
         )}
+
+        <span style={{ color: "var(--text-dim)" }}>{ageStr}</span>
       </div>
     </header>
   );
