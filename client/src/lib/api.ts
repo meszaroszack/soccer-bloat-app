@@ -25,6 +25,7 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     }),
+  credRefresh: () => req<any>("/api/credentials/refresh", { method: "POST" }),
   clearCredentials: () => req<any>("/api/credentials", { method: "DELETE" }),
 
   getScannerStatus: () => req<any>("/api/scanner/status"),

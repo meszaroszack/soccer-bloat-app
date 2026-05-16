@@ -27,10 +27,17 @@ export function TopBar({ activeTab, onTabChange }: Props) {
     queryFn: api.getAnalyticsSummary,
     refetchInterval: 15000,
   });
+  const { data: credStatus } = useQuery({
+    queryKey: ["cred-status"],
+    queryFn: api.getCredStatus,
+    refetchInterval: 30_000,
+  });
   const { data: account } = useQuery({
     queryKey: ["account-summary"],
     queryFn: api.getAccountSummary,
-    refetchInterval: 60000,
+    // Only poll if we have credentials
+    refetchInterval: credStatus?.connected ? 45_000 : false,
+    enabled: !!credStatus?.connected,
   });
 
   const hStatus = health?.status ?? "stopped";
@@ -166,15 +173,29 @@ export function TopBar({ activeTab, onTabChange }: Props) {
           </>
         )}
 
-        {account?.connected && (
-          <>
-            <span style={{ color: "var(--border-active)" }}>|</span>
-            <span style={{ color: "var(--text-dim)" }}>
-              <span style={{ color: "var(--green)", fontWeight: 600 }}>
-                ${account.balanceDollars?.toFixed(2)}
+        <div style={{ width: 1, height: 14, background: "var(--border-dim)" }} />
+        {credStatus?.connected ? (
+          account?.connected ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{
+                width: 5, height: 5, borderRadius: "50%",
+                background: "var(--green)",
+                boxShadow: "0 0 4px var(--green)",
+                flexShrink: 0,
+              }} />
+              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--green)", fontWeight: 600 }}>
+                ${(account.balanceDollars ?? 0).toFixed(2)}
               </span>
+            </div>
+          ) : (
+            <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--amber)" }}>
+              {account?.error ? "ACCT ERR" : "LOADING…"}
             </span>
-          </>
+          )
+        ) : (
+          <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-dim)" }}>
+            NO ACCOUNT
+          </span>
         )}
 
         {health?.errorCount > 0 && (
