@@ -389,3 +389,14 @@ td {
   50% { opacity: 0.6; }
   100% { opacity: 0.3; }
 }
+
+/* Table row hover */
+.table-row-hover:hover {
+  background: var(--bg-elevated) !important;
+  cursor: pointer;
+}
+
+/* Pnl colors */
+.pnl-positive { color: var(--green); }
+.pnl-negative { color: var(--red); }
+.pnl-zero { color: var(--text-dim); }
