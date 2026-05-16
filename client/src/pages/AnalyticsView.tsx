@@ -117,7 +117,7 @@ export function AnalyticsView() {
   });
   const { data: opportunities = [] } = useQuery({
     queryKey: ["opportunities"],
-    queryFn: () => api.getOpportunities(),
+    queryFn: () => api.getTopOpportunities(),
     refetchInterval: 30_000,
   });
   const { data: driftData = [] } = useQuery({

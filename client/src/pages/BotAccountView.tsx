@@ -111,9 +111,9 @@ export function BotAccountView() {
     queryFn: api.getBotStatus,
     refetchInterval: 5_000,
   });
-  const { data: pending = [] } = useQuery({
+  const { data: pending = [] } = useQuery<any[]>({
     queryKey: ["pending-signals"],
-    queryFn: api.getPendingSignals,
+    queryFn: api.getBotPending,
     refetchInterval: 5_000,
   });
   const { data: actions = [] } = useQuery({

@@ -3,9 +3,13 @@ import { api } from "../lib/api";
 
 export function IntelligenceView() {
   const qc = useQueryClient();
-  const { data: reportData, isLoading } = useQuery({
+  const { data: reportData, isLoading } = useQuery<{
+    available?: boolean;
+    hasKey?: boolean;
+    report?: any;
+  }>({
     queryKey: ["intel-report"],
-    queryFn: api.getIntelReport,
+    queryFn: api.getDailyReport,
     refetchInterval: 60_000,
   });
 
