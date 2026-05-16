@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { store, setCreds, clearCreds, hasCreds } from "./storage";
+import { store, setCreds, clearCreds, hasCreds, setLastValidatedAt, getLastValidatedAt, getCredKeyId } from "./storage";
 import { testCredentials } from "./kalshi";
 import { runScan, startScanner, stopScanner, scannerStatus } from "./scanner";
 import { confirmSignal, skipSignal, watchSignal, getBotStatus } from "./bot";
@@ -79,28 +79,85 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     res.json(updated);
   });
 
-  // Credentials
+  // ── Credentials ──────────────────────────────────────────────────────────
+
+  app.get("/api/credentials/status", (_req, res) => {
+    const connected = hasCreds();
+    const lastValidatedAt = getLastValidatedAt();
+    const keyId = getCredKeyId();
+    res.json({
+      hasCredentials: connected,
+      connected,
+      validated: connected && lastValidatedAt !== null,
+      lastValidatedAt,
+      keyIdHint: keyId ? `${keyId.slice(0, 8)}…` : null,
+      persistenceMode: "memory" as const,
+      warning: "Credentials are stored in server memory and will clear on restart or redeploy.",
+    });
+  });
+
   app.post("/api/credentials", async (req, res) => {
     const { apiKeyId, privateKeyPem } = req.body ?? {};
     if (!apiKeyId || !privateKeyPem) {
-      return res.status(400).json({ error: "Missing credentials" });
+      return res.status(400).json({ error: "Missing apiKeyId or privateKeyPem" });
     }
 
+    console.log("[creds] testing credentials for keyId:", apiKeyId.slice(0, 8), "…");
     const result = await testCredentials(apiKeyId, privateKeyPem);
-    if (result.valid) {
-      setCreds({ apiKeyId, privateKeyPem });
-      return res.json({ valid: true, balance: result.balance });
+
+    if (!result.valid) {
+      console.warn("[creds] validation failed:", result.error);
+      return res.status(401).json({ valid: false, error: result.error });
     }
-    return res.status(401).json({ valid: false, error: result.error });
+
+    // Persist in memory and mark validated
+    setCreds({ apiKeyId, privateKeyPem });
+    setLastValidatedAt(Date.now());
+    console.log("[creds] credentials saved and validated. Balance cents:", result.balance);
+
+    // Immediately hydrate account snapshot in background
+    const { refreshAccountSnapshot, getAccountSnapshot, getPositionsView } = await import("./account");
+    const snap = await refreshAccountSnapshot(true).catch((e) => {
+      console.warn("[creds] post-save account refresh failed:", e.message);
+      return getAccountSnapshot();
+    });
+    const positions = getPositionsView();
+
+    console.log("[creds] post-save account snapshot ready. Connected:", snap.connected);
+    return res.json({
+      valid: true,
+      balanceCents: result.balance,
+      balanceDollars: (result.balance ?? 0) / 100,
+      persistenceMode: "memory",
+      warning: "Credentials stored in server memory — will clear on restart/redeploy.",
+      account: snap,
+      positionsCount: positions.length,
+    });
+  });
+
+  app.post("/api/credentials/refresh", async (_req, res) => {
+    if (!hasCreds()) {
+      return res.status(400).json({ error: "No credentials configured" });
+    }
+    const { refreshAccountSnapshot, getAccountSnapshot, getPositionsView } = await import("./account");
+    const snap = await refreshAccountSnapshot(true).catch(() => getAccountSnapshot());
+    const positions = getPositionsView();
+    const lastValidatedAt = getLastValidatedAt();
+    res.json({
+      connected: snap.connected,
+      validated: !snap.error || snap.error.startsWith("Refresh failed"),
+      lastValidatedAt,
+      persistenceMode: "memory" as const,
+      warning: "Credentials stored in server memory — will clear on restart/redeploy.",
+      account: snap,
+      positionsCount: positions.length,
+    });
   });
 
   app.delete("/api/credentials", (_req, res) => {
     clearCreds();
+    console.log("[creds] credentials cleared");
     res.json({ cleared: true });
-  });
-
-  app.get("/api/credentials/status", (_req, res) => {
-    res.json({ hasCredentials: hasCreds() });
   });
 
   // Scanner

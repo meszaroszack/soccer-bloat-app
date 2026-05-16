@@ -15,14 +15,22 @@ interface KalshiCreds {
 }
 
 let _creds: KalshiCreds | null = null;
+let _lastValidatedAt: number | null = null;
+
 export const setCreds = (c: KalshiCreds) => {
   _creds = c;
+};
+export const setLastValidatedAt = (ts: number) => {
+  _lastValidatedAt = ts;
 };
 export const getCreds = () => _creds;
 export const clearCreds = () => {
   _creds = null;
+  _lastValidatedAt = null;
 };
 export const hasCreds = () => _creds !== null;
+export const getLastValidatedAt = () => _lastValidatedAt;
+export const getCredKeyId = () => _creds?.apiKeyId ?? null;
 
 const DEFAULT_SETTINGS: Settings = {
   scanEnabled: true,

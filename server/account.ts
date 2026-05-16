@@ -32,7 +32,9 @@ export interface PositionView {
 }
 
 let _snapshot: AccountSnapshot | null = null;
+let _lastGoodSnapshot: AccountSnapshot | null = null; // preserved across transient errors
 let _positions: PositionView[] = [];
+let _lastGoodPositions: PositionView[] = [];
 let _lastRefresh = 0;
 const CACHE_MS = 45_000;
 
@@ -57,10 +59,11 @@ async function fetchPositionsRaw(apiKeyId: string, pem: string): Promise<any[]> 
   return all;
 }
 
-export async function refreshAccountSnapshot(force = false): Promise<void> {
+/** Refresh and return the snapshot (so callers can get data immediately). */
+export async function refreshAccountSnapshot(force = false): Promise<AccountSnapshot> {
   const creds = getCreds();
   if (!creds) {
-    _snapshot = {
+    const snap: AccountSnapshot = {
       connected: false,
       balanceCents: 0,
       portfolioValueCents: 0,
@@ -72,17 +75,22 @@ export async function refreshAccountSnapshot(force = false): Promise<void> {
       lastUpdatedTs: new Date().toISOString(),
       error: "No credentials configured",
     };
+    _snapshot = snap;
     _positions = [];
-    return;
+    console.log("[account] no credentials — skipping refresh");
+    return snap;
   }
 
-  if (!force && Date.now() - _lastRefresh < CACHE_MS) return;
-  _lastRefresh = Date.now();
+  if (!force && Date.now() - _lastRefresh < CACHE_MS) return getAccountSnapshot();
 
+  console.log(`[account] refreshing snapshot (force=${force})`);
   try {
     const [balRaw, posRaw] = await Promise.all([
       fetchBalanceRaw(creds.apiKeyId, creds.privateKeyPem),
-      fetchPositionsRaw(creds.apiKeyId, creds.privateKeyPem).catch(() => []),
+      fetchPositionsRaw(creds.apiKeyId, creds.privateKeyPem).catch((e) => {
+        console.warn("[account] positions fetch failed:", e.message);
+        return [];
+      }),
     ]);
 
     const bal = balRaw.balance ?? {};
@@ -133,7 +141,10 @@ export async function refreshAccountSnapshot(force = false): Promise<void> {
     }
 
     _positions = openPos;
-    _snapshot = {
+    _lastGoodPositions = openPos;
+    _lastRefresh = Date.now();
+
+    const snap: AccountSnapshot = {
       connected: true,
       balanceCents,
       portfolioValueCents,
@@ -144,8 +155,27 @@ export async function refreshAccountSnapshot(force = false): Promise<void> {
       realizedPnlDollars: totalRealizedPnl,
       lastUpdatedTs: new Date().toISOString(),
     };
+    _snapshot = snap;
+    _lastGoodSnapshot = snap;
+    console.log(`[account] snapshot OK — balance $${snap.balanceDollars.toFixed(2)}, ${openPos.length} positions`);
+    return snap;
   } catch (err) {
-    _snapshot = {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("[account] refresh failed:", errMsg);
+
+    // Keep last known good data, but annotate with error
+    if (_lastGoodSnapshot) {
+      const degraded: AccountSnapshot = {
+        ..._lastGoodSnapshot,
+        lastUpdatedTs: new Date().toISOString(),
+        error: `Refresh failed — showing last known data. ${errMsg}`,
+      };
+      _snapshot = degraded;
+      _positions = _lastGoodPositions;
+      return degraded;
+    }
+
+    const snap: AccountSnapshot = {
       connected: false,
       balanceCents: 0,
       portfolioValueCents: 0,
@@ -155,9 +185,11 @@ export async function refreshAccountSnapshot(force = false): Promise<void> {
       openPositionsCount: 0,
       realizedPnlDollars: 0,
       lastUpdatedTs: new Date().toISOString(),
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg,
     };
+    _snapshot = snap;
     _positions = [];
+    return snap;
   }
 }
 
