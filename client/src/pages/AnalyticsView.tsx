@@ -1,177 +1,466 @@
 import { useQuery } from "@tanstack/react-query";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
-import { api, heatClass, heatBgClass } from "../lib/api";
-import { StrategyBadge } from "../components/StrategyBadge";
+import { api } from "../lib/api";
+
+function LeagueHeatTile({
+  league,
+  sport,
+  avgScore,
+  signalCount,
+  eventCount,
+}: any) {
+  const intensity = Math.min(100, avgScore ?? 0);
+  const bg =
+    intensity >= 60
+      ? "#2a1510"
+      : intensity >= 40
+        ? "#2a1f10"
+        : intensity >= 20
+          ? "#1a1f1a"
+          : "var(--bg-card)";
+  const borderColor =
+    intensity >= 60
+      ? "var(--red)"
+      : intensity >= 40
+        ? "var(--amber)"
+        : intensity >= 20
+          ? "var(--green-dim)"
+          : "var(--border-dim)";
+  const scoreColor =
+    intensity >= 60
+      ? "var(--red)"
+      : intensity >= 40
+        ? "var(--amber)"
+        : intensity >= 20
+          ? "var(--green)"
+          : "var(--text-dim)";
+
+  return (
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        borderRadius: 4,
+        padding: "12px 14px",
+        minWidth: 140,
+        boxShadow: intensity >= 60 ? `0 0 8px ${borderColor}30` : "none",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 11,
+          color: "var(--text-secondary)",
+          marginBottom: 4,
+        }}
+      >
+        {league}
+      </div>
+      <div style={{ fontSize: 9, color: "var(--text-dim)", marginBottom: 8 }}>{sport}</div>
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 22,
+          fontWeight: 700,
+          color: scoreColor,
+        }}
+      >
+        {Math.round(intensity)}
+      </div>
+      <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 4 }}>
+        {eventCount} EVT · {signalCount} SIG
+      </div>
+    </div>
+  );
+}
+
+function PlaceholderLeagueTile({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        background: "var(--bg-card)",
+        border: "1px solid var(--border-dim)",
+        borderRadius: 4,
+        padding: "12px 14px",
+        minWidth: 140,
+        opacity: 0.4,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 11,
+          color: "var(--text-dim)",
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        style={{
+          height: 8,
+          width: "60%",
+          background: "var(--bg-elevated)",
+          borderRadius: 2,
+          marginBottom: 8,
+        }}
+      />
+      <div style={{ fontFamily: "var(--mono)", fontSize: 22, color: "var(--bg-elevated)" }}>—</div>
+    </div>
+  );
+}
 
 export function AnalyticsView() {
   const { data: leagueHeat = [] } = useQuery({
     queryKey: ["league-heat"],
     queryFn: api.getLeagueHeat,
-    refetchInterval: 20_000,
+    refetchInterval: 30_000,
   });
   const { data: opportunities = [] } = useQuery({
     queryKey: ["opportunities"],
     queryFn: () => api.getOpportunities(),
-    refetchInterval: 20_000,
-  });
-  const { data: drift = [] } = useQuery({
-    queryKey: ["opening-drift"],
-    queryFn: api.getOpeningDrift,
     refetchInterval: 30_000,
   });
+  const { data: driftData = [] } = useQuery({
+    queryKey: ["opening-drift"],
+    queryFn: api.getOpeningDrift,
+    refetchInterval: 60_000,
+  });
 
-  const heatData = leagueHeat.slice(0, 12).map((l) => ({
-    league: l.league,
-    avgScore: Math.round(l.avgScore),
-    eventCount: l.eventCount,
-    signalCount: l.signalCount,
-  }));
+  const sectionStyle = {
+    marginBottom: 20,
+    background: "var(--bg-panel)",
+    border: "1px solid var(--border-dim)",
+    borderRadius: 4,
+    overflow: "hidden" as const,
+  };
+  const sectionHeader = (title: string, subtitle: string) => (
+    <div
+      style={{
+        padding: "10px 16px",
+        borderBottom: "1px solid var(--border-dim)",
+        background: "var(--bg-card)",
+        display: "flex",
+        alignItems: "baseline",
+        gap: 12,
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "var(--mono)",
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: "0.12em",
+          color: "var(--cyan)",
+        }}
+      >
+        {title}
+      </span>
+      <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{subtitle}</span>
+    </div>
+  );
 
   return (
-    <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 18 }}>
-      <section className="panel" style={{ padding: 16 }}>
-        <h3 className="h-section">League Heatmap</h3>
-        {leagueHeat.length === 0 ? (
-          <div style={{ color: "var(--text-dim)", padding: 16 }}>No data yet.</div>
-        ) : (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8, marginBottom: 18 }}>
-              {leagueHeat.map((l) => (
+    <div style={{ padding: 16 }}>
+      <div style={sectionStyle}>
+        {sectionHeader("LEAGUE HEATMAP", "signal intensity by league")}
+        <div style={{ padding: 16 }}>
+          {leagueHeat.length === 0 ? (
+            <>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+                {["MLB", "NBA", "NHL", "NFL", "Soccer", "MLS", "UFC", "Tennis"].map((l) => (
+                  <PlaceholderLeagueTile key={l} label={l} />
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
+                League heatmap will populate once scanner groups valid events and signals.
+              </div>
+            </>
+          ) : (
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              {leagueHeat.map((l: any) => (
+                <LeagueHeatTile key={l.league} {...l} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader("DAILY TOP-20 OPPORTUNITIES", "tracked whether traded or not")}
+        {opportunities.length === 0 ? (
+          <div style={{ padding: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
+              {Array.from({ length: 5 }).map((_, i) => (
                 <div
-                  key={l.league}
-                  className={`card-panel ${heatBgClass(l.avgScore)}`}
-                  style={{ padding: 12 }}
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "8px 12px",
+                    background: "var(--bg-card)",
+                    borderRadius: 3,
+                    opacity: 0.3,
+                  }}
                 >
-                  <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 2 }}>{l.league}</div>
-                  <div className="kv-label">{l.sport}</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 10 }}>
-                    <span className={`mono ${heatClass(l.avgScore)}`} style={{ fontSize: 20, fontWeight: 700 }}>
-                      {Math.round(l.avgScore)}
+                  <span
+                    style={{
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--text-dim)",
+                      width: 20,
+                    }}
+                  >
+                    #{i + 1}
+                  </span>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: 10,
+                      background: "var(--bg-elevated)",
+                      borderRadius: 2,
+                    }}
+                  />
+                  <div
+                    style={{
+                      width: 60,
+                      height: 10,
+                      background: "var(--bg-elevated)",
+                      borderRadius: 2,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
+              Top opportunities are tracked whether traded or not. Populates after first scan cycle.
+            </div>
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                {["#", "MATCH", "LEAGUE", "STRATEGIES", "SCORE", "TRADED", "OUTCOME"].map((h) => (
+                  <th
+                    key={h}
+                    style={{
+                      padding: "7px 12px",
+                      fontFamily: "var(--mono)",
+                      fontSize: 9,
+                      color: "var(--text-dim)",
+                      textAlign: "left",
+                      background: "var(--bg-card)",
+                      letterSpacing: "0.1em",
+                    }}
+                  >
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {opportunities.map((o: any) => (
+                <tr key={o.eventTicker} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--text-dim)",
+                    }}
+                  >
+                    #{o.rank}
+                  </td>
+                  <td style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-primary)" }}>
+                    {o.matchup}
+                  </td>
+                  <td
+                    style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-secondary)" }}
+                  >
+                    {o.league}
+                  </td>
+                  <td style={{ padding: "8px 12px" }}>
+                    <div style={{ display: "flex", gap: 3 }}>
+                      {(o.strategyMix ?? []).map((s: string) => (
+                        <span
+                          key={s}
+                          style={{
+                            fontSize: 9,
+                            fontFamily: "var(--mono)",
+                            padding: "2px 5px",
+                            background: "var(--bg-elevated)",
+                            borderRadius: 2,
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          {s.toUpperCase()}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      fontFamily: "var(--mono)",
+                      fontSize: 12,
+                      color:
+                        o.compositeScore >= 60
+                          ? "var(--red)"
+                          : o.compositeScore >= 40
+                            ? "var(--amber)"
+                            : "var(--text-secondary)",
+                    }}
+                  >
+                    {Math.round(o.compositeScore)}
+                  </td>
+                  <td style={{ padding: "8px 12px" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: o.traded ? "var(--green)" : "var(--text-dim)",
+                        fontFamily: "var(--mono)",
+                      }}
+                    >
+                      {o.traded ? "YES" : "OBS"}
                     </span>
-                    <span className="mono" style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                      {l.eventCount}E / {l.signalCount}S
-                    </span>
+                  </td>
+                  <td style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
+                    {o.outcome ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div style={sectionStyle}>
+        {sectionHeader("OPENING DRIFT RESEARCH", "tracking near-50/50 opens and favorite emergence")}
+        {driftData.length === 0 ? (
+          <div style={{ padding: 16 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              {["OPEN", "5M", "15M", "30M", "60M", "DRIFT"].map((l) => (
+                <div
+                  key={l}
+                  style={{
+                    flex: 1,
+                    padding: "20px 10px",
+                    background: "var(--bg-card)",
+                    borderRadius: 3,
+                    textAlign: "center",
+                    opacity: 0.35,
+                  }}
+                >
+                  <div style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--text-dim)" }}>
+                    {l}
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--mono)",
+                      fontSize: 16,
+                      color: "var(--bg-elevated)",
+                      marginTop: 4,
+                    }}
+                  >
+                    —
                   </div>
                 </div>
               ))}
             </div>
-            <div style={{ width: "100%", height: 240 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={heatData} margin={{ top: 8, right: 24, left: 0, bottom: 24 }}>
-                  <XAxis dataKey="league" stroke="#4a5568" tick={{ fontSize: 10, fill: "#8892a4", fontFamily: "var(--mono)" }} angle={-30} textAnchor="end" interval={0} />
-                  <YAxis stroke="#4a5568" tick={{ fontSize: 10, fill: "#8892a4", fontFamily: "var(--mono)" }} />
-                  <Tooltip
-                    contentStyle={{ background: "#13171e", border: "1px solid #2a3548", fontSize: 11 }}
-                    labelStyle={{ color: "#e2e8f0" }}
-                  />
-                  <Bar dataKey="avgScore">
-                    {heatData.map((d, i) => (
-                      <Cell key={i} fill={fillForScore(d.avgScore)} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", fontStyle: "italic" }}>
+              Tracking near-50/50 openers and favorite emergence. Records accumulate across scan cycles.
             </div>
-          </>
-        )}
-      </section>
-
-      <section className="panel" style={{ padding: 16 }}>
-        <h3 className="h-section">Top-20 Daily Opportunities</h3>
-        {opportunities.length === 0 ? (
-          <div style={{ color: "var(--text-dim)", padding: 12 }}>No opportunities yet today.</div>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Match</th>
-                <th>League</th>
-                <th>Strategies</th>
-                <th>Score</th>
-                <th>Traded</th>
-                <th>Outcome</th>
-              </tr>
-            </thead>
-            <tbody>
-              {opportunities.map((o) => (
-                <tr key={o.eventTicker} className={`table-row ${heatBgClass(o.compositeScore)}`}>
-                  <td className="mono">{o.rank}</td>
-                  <td>
-                    {o.matchup}
-                    <div style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--text-dim)" }}>{o.eventTicker}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontSize: 12 }}>{o.league}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{o.sport}</div>
-                  </td>
-                  <td>
-                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                      {(o.strategyMix ?? []).map((s: string) => (
-                        <StrategyBadge key={s} strategy={s} />
-                      ))}
-                    </div>
-                  </td>
-                  <td className={`mono ${heatClass(o.compositeScore)}`} style={{ fontWeight: 600 }}>
-                    {Math.round(o.compositeScore)}
-                  </td>
-                  <td className="mono" style={{ color: o.traded ? "var(--green)" : "var(--text-dim)" }}>
-                    {o.traded ? "YES" : "—"}
-                  </td>
-                  <td style={{ fontSize: 11 }}>{o.outcome ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="panel" style={{ padding: 16 }}>
-        <h3 className="h-section">Opening Drift Research</h3>
-        {drift.length === 0 ? (
-          <div style={{ color: "var(--text-dim)", padding: 12 }}>
-            No opening observations yet. These accumulate as the scanner sees new events.
           </div>
         ) : (
-          <table>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr>
-                <th>Event</th>
-                <th>First Yes</th>
-                <th>First No</th>
-                <th>5m</th>
-                <th>15m</th>
-                <th>30m</th>
-                <th>60m</th>
-                <th>Drift</th>
-                <th>Class</th>
+              <tr style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                {["MATCH", "FIRST YES", "FIRST NO", "5M", "15M", "30M", "60M", "DRIFT CLASS"].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      style={{
+                        padding: "7px 12px",
+                        fontFamily: "var(--mono)",
+                        fontSize: 9,
+                        color: "var(--text-dim)",
+                        textAlign: "left",
+                        background: "var(--bg-card)",
+                        letterSpacing: "0.1em",
+                      }}
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
-              {drift.map((d) => (
-                <tr key={d.eventTicker} className="table-row">
-                  <td className="mono" style={{ fontSize: 11 }}>{d.eventTicker}</td>
-                  <td className="mono">{(d.firstYesPrice * 100).toFixed(0)}%</td>
-                  <td className="mono">{(d.firstNoPrice * 100).toFixed(0)}%</td>
-                  <td className="mono">{d.favoriteAfter5m !== undefined ? (d.favoriteAfter5m * 100).toFixed(0) + "%" : "—"}</td>
-                  <td className="mono">{d.favoriteAfter15m !== undefined ? (d.favoriteAfter15m * 100).toFixed(0) + "%" : "—"}</td>
-                  <td className="mono">{d.favoriteAfter30m !== undefined ? (d.favoriteAfter30m * 100).toFixed(0) + "%" : "—"}</td>
-                  <td className="mono">{d.favoriteAfter60m !== undefined ? (d.favoriteAfter60m * 100).toFixed(0) + "%" : "—"}</td>
-                  <td className="mono" style={{ color: d.drift60m !== undefined ? (d.drift60m > 0 ? "var(--green)" : "var(--red)") : "var(--text-dim)" }}>
-                    {d.drift60m !== undefined ? (d.drift60m * 100).toFixed(1) + "%" : "—"}
+              {driftData.map((d: any) => (
+                <tr key={d.eventTicker} style={{ borderBottom: "1px solid var(--border-dim)" }}>
+                  <td style={{ padding: "8px 12px", fontSize: 12, color: "var(--text-primary)" }}>
+                    {d.eventTicker}
                   </td>
-                  <td>
-                    <span
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {(d.firstYesPrice * 100).toFixed(0)}%
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 12px",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {(d.firstNoPrice * 100).toFixed(0)}%
+                  </td>
+                  {[
+                    "favoriteAfter5m",
+                    "favoriteAfter15m",
+                    "favoriteAfter30m",
+                    "favoriteAfter60m",
+                  ].map((k) => (
+                    <td
+                      key={k}
                       style={{
+                        padding: "8px 12px",
                         fontFamily: "var(--mono)",
-                        fontSize: 10,
-                        padding: "2px 6px",
-                        borderRadius: 2,
-                        border: `1px solid ${classColor(d.driftClass)}`,
-                        color: classColor(d.driftClass),
+                        fontSize: 11,
+                        color: d[k] != null ? "var(--cyan)" : "var(--text-dim)",
                       }}
                     >
-                      {d.driftClass.toUpperCase()}
+                      {d[k] != null ? `${(d[k] * 100).toFixed(0)}%` : "—"}
+                    </td>
+                  ))}
+                  <td style={{ padding: "8px 12px" }}>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--mono)",
+                        padding: "2px 6px",
+                        borderRadius: 2,
+                        background:
+                          d.driftClass === "strong_drift"
+                            ? "var(--red-dim)"
+                            : d.driftClass === "mild_drift"
+                              ? "var(--amber-dim)"
+                              : "var(--bg-elevated)",
+                        color:
+                          d.driftClass === "strong_drift"
+                            ? "var(--red)"
+                            : d.driftClass === "mild_drift"
+                              ? "var(--amber)"
+                              : "var(--text-dim)",
+                      }}
+                    >
+                      {d.driftClass?.toUpperCase() ?? "—"}
                     </span>
                   </td>
                 </tr>
@@ -179,20 +468,7 @@ export function AnalyticsView() {
             </tbody>
           </table>
         )}
-      </section>
+      </div>
     </div>
   );
-}
-
-function fillForScore(s: number): string {
-  if (s < 20) return "#4a5568";
-  if (s < 40) return "#ffab40";
-  if (s < 70) return "#ff8c42";
-  return "#ff5252";
-}
-function classColor(c: string): string {
-  if (c === "strong_drift") return "#ff5252";
-  if (c === "mild_drift") return "#ffab40";
-  if (c === "stable") return "#00e676";
-  return "#8892a4";
 }

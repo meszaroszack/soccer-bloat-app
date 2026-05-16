@@ -371,3 +371,21 @@ td {
   left: 19px;
   background: var(--green);
 }
+
+/* Strategy badge base */
+.badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 2px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* Scanline overlay for analytics empty states */
+@keyframes scan-sweep {
+  0% { opacity: 0.3; }
+  50% { opacity: 0.6; }
+  100% { opacity: 0.3; }
+}
