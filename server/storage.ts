@@ -1,7 +1,13 @@
-import { type Signal, type InsertSignal, type Settings, type InsertSettings } from "@shared/schema";
 import { randomUUID } from "crypto";
-
-// ─── Credentials (in-memory only, never persisted) ────────────────────────────
+import type {
+  Settings,
+  NormalizedEvent,
+  Signal,
+  OpeningObservation,
+  DailyOpportunity,
+  PerplexityDailyReport,
+  BotAction,
+} from "../shared/types";
 
 interface KalshiCreds {
   apiKeyId: string;
@@ -9,78 +15,92 @@ interface KalshiCreds {
 }
 
 let _creds: KalshiCreds | null = null;
+export const setCreds = (c: KalshiCreds) => {
+  _creds = c;
+};
+export const getCreds = () => _creds;
+export const clearCreds = () => {
+  _creds = null;
+};
+export const hasCreds = () => _creds !== null;
 
-export function setCreds(creds: KalshiCreds) { _creds = creds; }
-export function getCreds(): KalshiCreds | null { return _creds; }
-export function clearCreds() { _creds = null; }
-export function hasCreds(): boolean { return _creds !== null; }
+const DEFAULT_SETTINGS: Settings = {
+  scanEnabled: true,
+  scanIntervalSec: 120,
+  botEnabled: false,
+  confirmMode: true,
+  maxConcurrentBets: 3,
+  betAmountDollars: 2.0,
+  betMode: "no_only",
+  enabledStrategies: {
+    bloat_no: true,
+    lay_draw: true,
+    pre_goal_back: true,
+    spread_scalp: true,
+    external_misprice: false,
+    open_drift_favorite: true,
+    perplexity_overlay: true,
+  },
+  sportFilters: [],
+  leagueFilters: [],
+  minBloatScore: 30,
+  minCompositeScore: 40,
+  minEdgePercent: 5,
+  perplexityEnabled: true,
+  perplexityDailyReportEnabled: true,
+  perplexityDailyReportTimeEt: "11:00",
+  perplexityWeight: 0.2,
+  updatedAt: new Date(),
+};
 
-// ─── Storage interface ────────────────────────────────────────────────────────
+class Store {
+  settings: Settings = { ...DEFAULT_SETTINGS };
+  events: Map<string, NormalizedEvent> = new Map();
+  signals: Map<string, Signal> = new Map();
+  openingObservations: Map<string, OpeningObservation> = new Map();
+  dailyOpportunities: DailyOpportunity[] = [];
+  perplexityReports: Map<string, PerplexityDailyReport> = new Map();
+  botActions: BotAction[] = [];
+  pendingConfirmations: Signal[] = [];
 
-export interface IStorage {
-  getSignals(): Promise<Signal[]>;
-  getSignal(id: string): Promise<Signal | undefined>;
-  createSignal(signal: InsertSignal): Promise<Signal>;
-  updateSignal(id: string, updates: Partial<Signal>): Promise<Signal | undefined>;
-  clearSignals(): Promise<void>;
-  getSettings(): Promise<Settings>;
-  updateSettings(s: Partial<InsertSettings>): Promise<Settings>;
-}
-
-export class MemStorage implements IStorage {
-  private signals: Map<string, Signal> = new Map();
-  private settingsData: Settings = {
-    id: "singleton",
-    minMinute: 65,
-    maxFavoriteProb: 0.78,
-    minFavoriteProb: 0.60,
-    scanEnabled: true,
-    scanIntervalSec: 60,
-    botEnabled: false,
-    betMode: "no_only",
-    betAmountDollars: 2.00,
-    minBloatScore: 40,
-    updatedAt: new Date(),
-  };
-
-  async getSignals(): Promise<Signal[]> {
-    return Array.from(this.signals.values()).sort(
-      (a, b) => new Date(b.detectedAt).getTime() - new Date(a.detectedAt).getTime()
-    );
+  getSettings() {
+    return this.settings;
+  }
+  updateSettings(s: Partial<Settings>) {
+    this.settings = { ...this.settings, ...s, updatedAt: new Date() };
+    return this.settings;
   }
 
-  async getSignal(id: string): Promise<Signal | undefined> {
+  upsertEvent(event: NormalizedEvent) {
+    this.events.set(event.eventTicker, event);
+  }
+  getEvent(ticker: string) {
+    return this.events.get(ticker);
+  }
+  getAllEvents() {
+    return Array.from(this.events.values());
+  }
+  clearOldEvents(maxAgeMs = 4 * 60 * 60 * 1000) {
+    const cutoff = Date.now() - maxAgeMs;
+    for (const [k, v] of this.events) {
+      if (v.lastUpdated.getTime() < cutoff) this.events.delete(k);
+    }
+  }
+
+  createSignal(s: Omit<Signal, "id" | "detectedAt">) {
+    const sig: Signal = { ...s, id: randomUUID(), detectedAt: new Date() };
+    this.signals.set(sig.id, sig);
+    return sig;
+  }
+  getSignal(id: string) {
     return this.signals.get(id);
   }
-
-  async createSignal(signal: InsertSignal): Promise<Signal> {
-    const id = randomUUID();
-    const full: Signal = {
-      id,
-      detectedAt: new Date(),
-      matchTitle: signal.matchTitle,
-      ticker: signal.ticker,
-      marketTitle: signal.marketTitle,
-      favoriteProb: signal.favoriteProb,
-      drawPrice: signal.drawPrice ?? null,
-      yesPrice: signal.yesPrice ?? null,
-      minuteEstimate: signal.minuteEstimate ?? null,
-      bloatScore: signal.bloatScore,
-      status: signal.status ?? "active",
-      betSide: signal.betSide ?? null,
-      betAmount: signal.betAmount ?? null,
-      orderIds: signal.orderIds ?? null,
-      outcome: signal.outcome ?? null,
-      profit: signal.profit ?? null,
-      isAuto: signal.isAuto ?? false,
-      errorMsg: signal.errorMsg ?? null,
-      tradedAt: signal.tradedAt ?? null,
-    };
-    this.signals.set(id, full);
-    return full;
+  getAllSignals() {
+    return Array.from(this.signals.values()).sort(
+      (a, b) => b.detectedAt.getTime() - a.detectedAt.getTime(),
+    );
   }
-
-  async updateSignal(id: string, updates: Partial<Signal>): Promise<Signal | undefined> {
+  updateSignal(id: string, updates: Partial<Signal>) {
     const s = this.signals.get(id);
     if (!s) return undefined;
     const updated = { ...s, ...updates };
@@ -88,18 +108,68 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
-  async clearSignals(): Promise<void> {
-    this.signals.clear();
+  upsertOpening(obs: OpeningObservation) {
+    this.openingObservations.set(obs.eventTicker, obs);
+  }
+  getOpening(ticker: string) {
+    return this.openingObservations.get(ticker);
+  }
+  getAllOpenings() {
+    return Array.from(this.openingObservations.values());
   }
 
-  async getSettings(): Promise<Settings> {
-    return this.settingsData;
+  upsertDailyOpportunity(opp: DailyOpportunity) {
+    const idx = this.dailyOpportunities.findIndex(
+      (o) => o.eventTicker === opp.eventTicker && o.date === opp.date,
+    );
+    if (idx >= 0) this.dailyOpportunities[idx] = opp;
+    else this.dailyOpportunities.push(opp);
+
+    const today = opp.date;
+    const todayOpps = this.dailyOpportunities
+      .filter((o) => o.date === today)
+      .sort((a, b) => b.compositeScore - a.compositeScore);
+    todayOpps.forEach((o, i) => {
+      o.rank = i + 1;
+    });
+  }
+  getDailyOpportunities(date?: string) {
+    if (date) return this.dailyOpportunities.filter((o) => o.date === date);
+    return this.dailyOpportunities;
   }
 
-  async updateSettings(s: Partial<InsertSettings>): Promise<Settings> {
-    this.settingsData = { ...this.settingsData, ...s, updatedAt: new Date() };
-    return this.settingsData;
+  savePerplexityReport(report: PerplexityDailyReport) {
+    this.perplexityReports.set(report.date, report);
+  }
+  getPerplexityReport(date: string) {
+    return this.perplexityReports.get(date);
+  }
+  getTodayReport() {
+    const today = new Date().toISOString().slice(0, 10);
+    return this.perplexityReports.get(today);
+  }
+
+  addBotAction(a: Omit<BotAction, "id" | "timestamp">) {
+    const action: BotAction = { ...a, id: randomUUID(), timestamp: new Date() };
+    this.botActions.unshift(action);
+    if (this.botActions.length > 500) this.botActions = this.botActions.slice(0, 500);
+    return action;
+  }
+  getBotActions(limit = 50) {
+    return this.botActions.slice(0, limit);
+  }
+
+  addPendingConfirmation(sig: Signal) {
+    if (!this.pendingConfirmations.find((s) => s.id === sig.id)) {
+      this.pendingConfirmations.push(sig);
+    }
+  }
+  removePendingConfirmation(id: string) {
+    this.pendingConfirmations = this.pendingConfirmations.filter((s) => s.id !== id);
+  }
+  getPendingConfirmations() {
+    return this.pendingConfirmations;
   }
 }
 
-export const storage = new MemStorage();
+export const store = new Store();
