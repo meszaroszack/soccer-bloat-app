@@ -1,9 +1,5 @@
 import { store } from "./storage";
-import {
-  fetchAllSportsMarkets,
-  buildNormalizedEvent,
-  groupMarketsIntoEvents,
-} from "./kalshi";
+import { fetchAllSportsMarkets, buildNormalizedEvent } from "./kalshi";
 import {
   runBloatNo,
   runLayDraw,
@@ -15,7 +11,12 @@ import {
 } from "./strategies";
 import { recordOpeningSnapshot } from "./openingTracker";
 import { shouldRunDailyReport, generateDailyReport } from "./perplexity";
-import type { NormalizedEvent, Signal, DailyOpportunity, StrategyResult } from "../shared/types";
+import type {
+  NormalizedEvent,
+  Signal,
+  DailyOpportunity,
+  StrategyResult,
+} from "../shared/types";
 
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 let isScanning = false;
@@ -26,39 +27,54 @@ export const scannerStatus = {
   nextScan: null as Date | null,
   eventsScanned: 0,
   signalsGenerated: 0,
+  rawMarketCount: 0,
+  normalizedEventCount: 0,
+  failedNormalizationCount: 0,
+  errorCount: 0,
+  lastError: null as string | null,
   errors: [] as string[],
 };
+
+function addError(msg: string) {
+  scannerStatus.lastError = msg;
+  scannerStatus.errorCount++;
+  scannerStatus.errors.unshift(`[${new Date().toISOString()}] ${msg}`);
+  if (scannerStatus.errors.length > 30) scannerStatus.errors = scannerStatus.errors.slice(0, 30);
+  console.error("[scanner]", msg);
+}
 
 export async function runScan(): Promise<void> {
   if (isScanning) return;
   isScanning = true;
 
   const settings = store.getSettings();
+  console.log("[scanner] Starting scan...");
 
   try {
-    let rawMarkets: any[];
+    let sportsData: Awaited<ReturnType<typeof fetchAllSportsMarkets>>;
     try {
-      rawMarkets = await fetchAllSportsMarkets();
+      sportsData = await fetchAllSportsMarkets();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      scannerStatus.errors.unshift(`Kalshi fetch error: ${msg}`);
-      if (scannerStatus.errors.length > 20) scannerStatus.errors.pop();
+      addError(`Kalshi fetch failed: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
 
-    const groups = groupMarketsIntoEvents(rawMarkets);
+    console.log(`[scanner] Fetched ${sportsData.length} events from Kalshi`);
+    scannerStatus.rawMarketCount = sportsData.reduce((s, d) => s + d.markets.length, 0);
+
     let newSignals = 0;
     const eventList: NormalizedEvent[] = [];
+    let failCount = 0;
 
-    for (const [eventTicker, markets] of groups) {
+    for (const data of sportsData) {
       try {
-        const event = buildNormalizedEvent(eventTicker, markets);
+        const event = buildNormalizedEvent(data);
 
         if (settings.sportFilters.length > 0 && !settings.sportFilters.includes(event.sport)) continue;
         if (settings.leagueFilters.length > 0 && !settings.leagueFilters.includes(event.league)) continue;
 
         recordOpeningSnapshot(event);
-        const openSnap = store.getOpening(eventTicker);
+        const openSnap = store.getOpening(event.eventTicker);
         if (openSnap) event.openingSnapshot = openSnap;
 
         const stratResults: StrategyResult[] = [];
@@ -88,7 +104,7 @@ export async function runScan(): Promise<void> {
         }
 
         const pxReport = store.getTodayReport();
-        const pxFocus = pxReport?.focusEvents.find((f) => f.eventTicker === eventTicker);
+        const pxFocus = pxReport?.focusEvents.find((f) => f.eventTicker === event.eventTicker);
         const pxScore = pxFocus ? pxFocus.actionabilityScore / 10 : 0;
 
         const { compositeScore, heatmapBreakdown } = computeCompositeScore(
@@ -113,7 +129,7 @@ export async function runScan(): Promise<void> {
                   : "pending_confirm";
 
             const sig: Omit<Signal, "id" | "detectedAt"> = {
-              eventTicker,
+              eventTicker: event.eventTicker,
               strategy: result.strategyKey,
               sport: event.sport,
               league: event.league,
@@ -133,14 +149,16 @@ export async function runScan(): Promise<void> {
               ticker: event.markets[0]?.ticker,
             };
 
-            const existing = store.getAllSignals().find(
-              (s) =>
-                s.eventTicker === eventTicker &&
-                s.strategy === result.strategyKey &&
-                (s.status === "pending_confirm" ||
-                  s.status === "observed_only" ||
-                  s.status === "active"),
-            );
+            const existing = store
+              .getAllSignals()
+              .find(
+                (s) =>
+                  s.eventTicker === event.eventTicker &&
+                  s.strategy === result.strategyKey &&
+                  (s.status === "pending_confirm" ||
+                    s.status === "observed_only" ||
+                    s.status === "active"),
+              );
 
             if (!existing) {
               const created = store.createSignal(sig);
@@ -152,12 +170,12 @@ export async function runScan(): Promise<void> {
           }
         }
 
-        if (compositeScore >= settings.minCompositeScore && stratResults.length > 0) {
+        if (compositeScore >= settings.minCompositeScore || eventList.length <= 20) {
           const today = new Date().toISOString().slice(0, 10);
           const opp: DailyOpportunity = {
             date: today,
             rank: 999,
-            eventTicker,
+            eventTicker: event.eventTicker,
             sport: event.sport,
             league: event.league,
             matchup: event.matchup,
@@ -168,24 +186,31 @@ export async function runScan(): Promise<void> {
           };
           store.upsertDailyOpportunity(opp);
         }
-      } catch {
-        // skip bad events silently
+      } catch (err) {
+        failCount++;
+        addError(
+          `Event normalization failed for ${data.event?.event_ticker}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
     store.clearOldEvents();
 
     scannerStatus.eventsScanned = eventList.length;
+    scannerStatus.normalizedEventCount = eventList.length;
+    scannerStatus.failedNormalizationCount = failCount;
     scannerStatus.signalsGenerated += newSignals;
     scannerStatus.lastScan = new Date();
 
+    console.log(
+      `[scanner] Scan complete: ${eventList.length} events, ${newSignals} new signals, ${failCount} failed`,
+    );
+
     if (shouldRunDailyReport()) {
-      const topEvents = eventList
+      const topEvents = [...eventList]
         .sort((a, b) => b.latestCompositeScore - a.latestCompositeScore)
         .slice(0, 20);
-      generateDailyReport(topEvents).catch((err) => {
-        console.error("Perplexity daily report error:", err);
-      });
+      generateDailyReport(topEvents).catch((err) => addError(`Perplexity report error: ${err}`));
     }
   } finally {
     isScanning = false;
@@ -207,13 +232,13 @@ export function startScanner(): void {
       try {
         await runScan();
       } catch (err) {
-        console.error("Scan error:", err);
+        addError(`Scan loop error: ${err}`);
       }
       schedule();
     }, intervalMs);
   };
 
-  runScan().catch((err) => console.error("Initial scan error:", err));
+  runScan().catch((err) => addError(`Initial scan error: ${err}`));
   schedule();
 }
 

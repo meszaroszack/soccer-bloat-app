@@ -80,80 +80,91 @@ export async function testCredentials(
   }
 }
 
-export async function fetchPaginatedMarkets(
-  params: { limit?: number; cursor?: string; status?: string; seriesTicker?: string } = {},
-): Promise<{ markets: any[]; cursor?: string }> {
-  const qs = new URLSearchParams();
-  qs.set("limit", String(params.limit ?? 200));
-  if (params.cursor) qs.set("cursor", params.cursor);
-  if (params.status) qs.set("status", params.status);
-  if (params.seriesTicker) qs.set("series_ticker", params.seriesTicker);
+// Sport series config (verified working tickers)
+export const SPORTS_SERIES: Array<{ seriesTicker: string; sport: string; league: string }> = [
+  { seriesTicker: "KXMLBGAME", sport: "Baseball", league: "MLB" },
+  { seriesTicker: "KXMLBSPREAD", sport: "Baseball", league: "MLB" },
+  { seriesTicker: "KXNBAGAME", sport: "Basketball", league: "NBA" },
+  { seriesTicker: "KXNBASPREAD", sport: "Basketball", league: "NBA" },
+  { seriesTicker: "KXNHLGAME", sport: "Hockey", league: "NHL" },
+  { seriesTicker: "KXNHLSPREAD", sport: "Hockey", league: "NHL" },
+  { seriesTicker: "KXNFLGAME", sport: "Football", league: "NFL" },
+  { seriesTicker: "KXNFLSPREAD", sport: "Football", league: "NFL" },
+  { seriesTicker: "KXMLSGAME", sport: "Soccer", league: "MLS" },
+  { seriesTicker: "KXSOCCERGAME", sport: "Soccer", league: "Soccer" },
+  { seriesTicker: "KXSOCCERSPREAD", sport: "Soccer", league: "Soccer" },
+  { seriesTicker: "KXUFCFIGHT", sport: "MMA", league: "UFC" },
+  { seriesTicker: "KXTENNIS", sport: "Tennis", league: "Tennis" },
+  { seriesTicker: "KXWNBAGAME", sport: "Basketball", league: "WNBA" },
+  { seriesTicker: "KXWNBASPREAD", sport: "Basketball", league: "WNBA" },
+  { seriesTicker: "KXNASCARRACE", sport: "Motorsport", league: "NASCAR" },
+  { seriesTicker: "KXPGAGOLF", sport: "Golf", league: "PGA" },
+];
 
-  const data = await kalshiGet(`/markets?${qs.toString()}`);
-  return { markets: data.markets ?? [], cursor: data.cursor };
-}
-
-export async function fetchAllSportsMarkets(): Promise<any[]> {
-  const all: any[] = [];
-  let cursor: string | undefined;
-  let page = 0;
-  const maxPages = 20;
-
-  while (page < maxPages) {
-    const { markets, cursor: next } = await fetchPaginatedMarkets({
-      limit: 200,
-      cursor,
+export async function fetchSeriesEvents(
+  seriesTicker: string,
+  apiKeyId?: string,
+  privateKeyPem?: string,
+): Promise<any[]> {
+  try {
+    const qs = new URLSearchParams({
+      limit: "100",
+      series_ticker: seriesTicker,
       status: "open",
     });
-
-    const sports = markets.filter((m) => isSportsMarket(m));
-    all.push(...sports);
-
-    cursor = next;
-    page++;
-    if (!next || markets.length === 0) break;
+    const data = await kalshiGet(`/events?${qs.toString()}`, apiKeyId, privateKeyPem);
+    return data.events ?? [];
+  } catch {
+    return [];
   }
-
-  return all;
 }
 
-function isSportsMarket(m: any): boolean {
-  const text = `${m.title ?? ""} ${m.subtitle ?? ""} ${m.event_title ?? ""} ${m.series_ticker ?? ""} ${m.event_ticker ?? ""}`.toLowerCase();
-  const sportKeywords = [
-    "soccer",
-    "football",
-    "nfl",
-    "nba",
-    "mlb",
-    "nhl",
-    "mls",
-    "premier",
-    "laliga",
-    "bundesliga",
-    "serie a",
-    "ligue 1",
-    "champions",
-    "europa",
-    "world cup",
-    "formula",
-    "f1",
-    "tennis",
-    "ufc",
-    "mma",
-    "boxing",
-    "nascar",
-    "golf",
-    "pga",
-    "olympic",
-    "hockey",
-    "basketball",
-    "baseball",
-    "cricket",
-    "rugby",
-    "afl",
-    "nrl",
-  ];
-  return sportKeywords.some((k) => text.includes(k));
+export async function fetchEventMarkets(
+  eventTicker: string,
+  apiKeyId?: string,
+  privateKeyPem?: string,
+): Promise<any[]> {
+  try {
+    const qs = new URLSearchParams({
+      event_ticker: eventTicker,
+      status: "open",
+      limit: "20",
+    });
+    const data = await kalshiGet(`/markets?${qs.toString()}`, apiKeyId, privateKeyPem);
+    return data.markets ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchAllSportsMarkets(): Promise<
+  Array<{ event: any; markets: any[]; sport: string; league: string }>
+> {
+  const results: Array<{ event: any; markets: any[]; sport: string; league: string }> = [];
+  const seenEventTickers = new Set<string>();
+
+  for (const seriesConfig of SPORTS_SERIES) {
+    const events = await fetchSeriesEvents(seriesConfig.seriesTicker);
+
+    for (const event of events) {
+      if (seenEventTickers.has(event.event_ticker)) continue;
+      seenEventTickers.add(event.event_ticker);
+
+      const markets = await fetchEventMarkets(event.event_ticker);
+      if (markets.length > 0) {
+        results.push({
+          event,
+          markets,
+          sport: seriesConfig.sport,
+          league: seriesConfig.league,
+        });
+      }
+
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
+  return results;
 }
 
 export function parseMarketType(m: any): MarketType {
@@ -175,100 +186,101 @@ export function inferSportLeague(m: any): { sport: string; league: string } {
   if (text.includes("NHL")) return { sport: "Hockey", league: "NHL" };
   if (text.includes("MLS")) return { sport: "Soccer", league: "MLS" };
   if (text.includes("PREMIER") || text.includes("EPL")) return { sport: "Soccer", league: "Premier League" };
-  if (text.includes("LALIGA") || text.includes("LA LIGA")) return { sport: "Soccer", league: "La Liga" };
-  if (text.includes("BUNDESLIGA")) return { sport: "Soccer", league: "Bundesliga" };
-  if (text.includes("SERIEA") || text.includes("SERIE A")) return { sport: "Soccer", league: "Serie A" };
-  if (text.includes("LIGUE")) return { sport: "Soccer", league: "Ligue 1" };
   if (text.includes("UCL") || text.includes("CHAMPIONS")) return { sport: "Soccer", league: "Champions League" };
-  if (text.includes("EUROPA")) return { sport: "Soccer", league: "Europa League" };
   if (text.includes("UFC") || text.includes("MMA")) return { sport: "MMA", league: "UFC" };
   if (text.includes("TENNIS")) return { sport: "Tennis", league: "Tennis" };
   if (text.includes("F1") || text.includes("FORMULA")) return { sport: "Motorsport", league: "F1" };
   if (text.includes("GOLF") || text.includes("PGA")) return { sport: "Golf", league: "PGA" };
-  if (text.includes("BOXING")) return { sport: "Boxing", league: "Boxing" };
-  if (text.includes("NASCAR")) return { sport: "Motorsport", league: "NASCAR" };
-  if (text.includes("CRICKET")) return { sport: "Cricket", league: "Cricket" };
-  if (text.includes("RUGBY")) return { sport: "Rugby", league: "Rugby" };
-  if (text.includes("SOCCER")) return { sport: "Soccer", league: "Soccer" };
 
   return { sport: "Sports", league: "Other" };
 }
 
 export function normalizeMarket(m: any): NormalizedMarket {
-  const yesPrice = parseFloat(m.yes_bid ?? m.last_price ?? "0.5") || 0.5;
-  const noPrice = parseFloat(m.no_bid ?? "0") || 1 - yesPrice;
+  const yesBid = parseFloat(m.yes_bid_dollars ?? "0") || 0;
+  const noAsk = parseFloat(m.no_ask_dollars ?? "0") || 0;
+  const yesAsk = parseFloat(m.yes_ask_dollars ?? "0") || 0;
+  const noBid = parseFloat(m.no_bid_dollars ?? "0") || 0;
+  const lastPrice = parseFloat(m.last_price_dollars ?? "0") || 0;
+
+  let yesPrice = yesBid > 0 && yesAsk > 0 ? (yesBid + yesAsk) / 2 : yesBid || yesAsk || lastPrice || 0.5;
+  let noPrice = noBid > 0 && noAsk > 0 ? (noBid + noAsk) / 2 : noBid || noAsk || 1 - yesPrice;
+
+  yesPrice = Math.min(0.99, Math.max(0.01, yesPrice));
+  noPrice = Math.min(0.99, Math.max(0.01, noPrice));
+
   return {
     ticker: m.ticker ?? "",
     title: m.title ?? m.ticker ?? "",
-    subtitle: m.subtitle,
-    yesPrice: Math.min(0.99, Math.max(0.01, yesPrice)),
-    noPrice: Math.min(0.99, Math.max(0.01, noPrice)),
-    yesBid: parseFloat(m.yes_bid) || undefined,
-    noAsk: parseFloat(m.no_ask) || undefined,
-    volume: m.volume ?? 0,
-    openInterest: m.open_interest ?? 0,
+    subtitle: m.yes_sub_title ?? "",
+    yesPrice,
+    noPrice,
+    yesBid: yesBid || undefined,
+    noAsk: noAsk || undefined,
+    volume: parseFloat(m.volume_fp ?? m.volume_24h_fp ?? "0") || 0,
+    openInterest: parseFloat(m.open_interest_fp ?? "0") || 0,
     status: m.status ?? "open",
   };
 }
 
-export function groupMarketsIntoEvents(markets: any[]): Map<string, any[]> {
-  const groups = new Map<string, any[]>();
-  for (const m of markets) {
-    const key = m.event_ticker ?? m.ticker;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(m);
-  }
-  return groups;
+export function groupMarketsIntoEvents(_markets: any[]): Map<string, any[]> {
+  return new Map();
 }
 
-export function buildNormalizedEvent(eventTicker: string, rawMarkets: any[]): NormalizedEvent {
-  if (!rawMarkets.length) throw new Error("No markets for event");
+export function buildNormalizedEvent(eventData: {
+  event: any;
+  markets: any[];
+  sport: string;
+  league: string;
+}): NormalizedEvent {
+  const { event, markets: rawMarkets, sport, league } = eventData;
 
-  const first = rawMarkets[0];
-  const { sport, league } = inferSportLeague(first);
+  if (!rawMarkets.length) throw new Error("No markets");
+
   const normalizedMarkets = rawMarkets.map(normalizeMarket);
 
-  const marketType = parseMarketType(first);
   const hasDraw = rawMarkets.some((m) => {
-    const t = `${m.title ?? ""} ${m.subtitle ?? ""}`.toLowerCase();
-    return t.includes("draw") || t.includes("tie");
+    const sub = (m.yes_sub_title ?? "").toLowerCase();
+    return sub === "draw" || sub === "tie" || sub.includes("draw") || sub.includes("tie");
   });
 
   const nonDrawMarkets = normalizedMarkets.filter((m) => {
-    const t = `${m.title} ${m.subtitle ?? ""}`.toLowerCase();
-    return !t.includes("draw") && !t.includes("tie");
+    const sub = (m.subtitle ?? "").toLowerCase();
+    return sub !== "draw" && sub !== "tie" && !sub.includes("draw") && !sub.includes("tie");
   });
-
-  const favorite = nonDrawMarkets.reduce(
-    (a, b) => (a.yesPrice >= b.yesPrice ? a : b),
-    nonDrawMarkets[0] ?? normalizedMarkets[0],
-  );
-  const favoriteProb = favorite?.yesPrice ?? 0.5;
 
   const drawMarket = normalizedMarkets.find((m) => {
-    const t = `${m.title} ${m.subtitle ?? ""}`.toLowerCase();
-    return t.includes("draw") || t.includes("tie");
+    const sub = (m.subtitle ?? "").toLowerCase();
+    return sub === "draw" || sub === "tie" || sub.includes("draw");
   });
 
-  const rawTitle = first.event_title ?? first.title ?? eventTicker;
+  const mainMarkets = nonDrawMarkets.length > 0 ? nonDrawMarkets : normalizedMarkets;
+  const favorite = mainMarkets.reduce((a, b) => (a.yesPrice >= b.yesPrice ? a : b), mainMarkets[0]);
+  const favoriteProb = favorite?.yesPrice ?? 0.5;
+  const favoriteName = favorite?.subtitle || favorite?.title || "Favorite";
+
+  const rawTitle = event.title ?? event.sub_title ?? event.event_ticker;
   const matchup = rawTitle;
 
-  const kickoffTime = getKickoffTimeFromMarket(first);
+  const kickoffTime = getKickoffTimeFromMarket(rawMarkets[0]);
   const minute = estimateMinute(kickoffTime);
-  const isLive = kickoffTime !== null && minute >= 0 && minute <= 115;
+  const isLive = kickoffTime !== null && minute >= 0 && minute <= 200;
 
-  const favoriteName = favorite?.subtitle ?? favorite?.title ?? "Favorite";
+  const seriesTicker = (event.series_ticker ?? "").toUpperCase();
+  let marketType: MarketType = "moneyline";
+  if (hasDraw) marketType = "three_way";
+  else if (seriesTicker.includes("SPREAD")) marketType = "spread";
+  else if (seriesTicker.includes("TOTAL") || seriesTicker.includes("OVER")) marketType = "total";
 
   return {
-    eventTicker,
+    eventTicker: event.event_ticker,
     sport,
     league,
     matchup,
-    status: first.status ?? "open",
+    status: "open",
     kickoffTime,
     isLive,
-    minuteEstimate: minute,
-    marketType: hasDraw ? "three_way" : marketType,
+    minuteEstimate: isLive ? minute : 0,
+    marketType,
     markets: normalizedMarkets,
     favoriteSide: favoriteName,
     favoriteProb,
@@ -282,9 +294,9 @@ export function buildNormalizedEvent(eventTicker: string, rawMarkets: any[]): No
 }
 
 function getKickoffTimeFromMarket(m: any): number | null {
-  const exp = m.expected_expiration_time ?? m.expiration_time;
+  const exp = m.close_time ?? m.expected_expiration_time ?? m.expiration_time;
   if (!exp) return null;
-  return new Date(exp).getTime() - 2 * 60 * 60 * 1000;
+  return new Date(exp).getTime() - 3 * 60 * 60 * 1000;
 }
 
 function estimateMinute(kickoffTime: number | null): number {
