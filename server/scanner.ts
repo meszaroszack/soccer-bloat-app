@@ -1,47 +1,74 @@
 import { store } from "./storage";
-import { fetchAllSportsMarkets, buildNormalizedEvent } from "./kalshi";
+import {
+  fetchAllSportsMarkets,
+  buildNormalizedEvent,
+} from "./kalshi";
 import { routeSignal } from "./bot";
 import {
-  runBloatNo,
-  runLayDraw,
-  runPreGoalBack,
-  runSpreadScalp,
-  runExternalMisprice,
-  runOpenDriftFavorite,
+  runAllStrategies,
   computeCompositeScore,
+  getPerplexityScore,
 } from "./strategies";
-import { recordOpeningSnapshot } from "./openingTracker";
+import {
+  recordOpeningSnapshot,
+  maybeUpdateDriftFromEvent,
+} from "./openingTracker";
 import { shouldRunDailyReport, generateDailyReport } from "./perplexity";
 import type {
   NormalizedEvent,
   Signal,
   DailyOpportunity,
   StrategyResult,
+  HeatmapReason,
 } from "../shared/types";
 
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 let isScanning = false;
 
-export const scannerStatus = {
+interface ScannerHealth {
+  running: boolean;
+  lastScanAt: Date | null;
+  nextScanAt: Date | null;
+  rawMarketCount: number;
+  normalizedEventCount: number;
+  groupedEventCount: number;
+  signalCount: number;
+  errorCount: number;
+  lastError: string | null;
+  recentErrors: Array<{ time: Date; message: string }>;
+}
+
+export const scannerStatus: ScannerHealth = {
   running: false,
-  lastScan: null as Date | null,
-  nextScan: null as Date | null,
-  eventsScanned: 0,
-  signalsGenerated: 0,
+  lastScanAt: null,
+  nextScanAt: null,
   rawMarketCount: 0,
   normalizedEventCount: 0,
-  failedNormalizationCount: 0,
+  groupedEventCount: 0,
+  signalCount: 0,
   errorCount: 0,
-  lastError: null as string | null,
-  errors: [] as string[],
+  lastError: null,
+  recentErrors: [],
 };
 
 function addError(msg: string) {
   scannerStatus.lastError = msg;
   scannerStatus.errorCount++;
-  scannerStatus.errors.unshift(`[${new Date().toISOString()}] ${msg}`);
-  if (scannerStatus.errors.length > 30) scannerStatus.errors = scannerStatus.errors.slice(0, 30);
+  scannerStatus.recentErrors.unshift({ time: new Date(), message: msg });
+  if (scannerStatus.recentErrors.length > 20) {
+    scannerStatus.recentErrors = scannerStatus.recentErrors.slice(0, 20);
+  }
   console.error("[scanner]", msg);
+}
+
+function flattenHeatmap(results: StrategyResult[]): HeatmapReason[] {
+  const out: HeatmapReason[] = [];
+  for (const r of results) {
+    for (const h of r.heatmapReasons) {
+      out.push({ key: `${r.strategyKey}:${h.key}`, score: h.score, label: h.label });
+    }
+  }
+  return out;
 }
 
 export async function runScan(): Promise<void> {
@@ -49,7 +76,7 @@ export async function runScan(): Promise<void> {
   isScanning = true;
 
   const settings = store.getSettings();
-  console.log("[scanner] Starting scan...");
+  console.log("[scanner] starting scan");
 
   try {
     let sportsData: Awaited<ReturnType<typeof fetchAllSportsMarkets>>;
@@ -60,12 +87,11 @@ export async function runScan(): Promise<void> {
       return;
     }
 
-    console.log(`[scanner] Fetched ${sportsData.length} events from Kalshi`);
     scannerStatus.rawMarketCount = sportsData.reduce((s, d) => s + d.markets.length, 0);
+    scannerStatus.groupedEventCount = sportsData.length;
 
     let newSignals = 0;
     const eventList: NormalizedEvent[] = [];
-    let failCount = 0;
 
     for (const data of sportsData) {
       try {
@@ -75,65 +101,42 @@ export async function runScan(): Promise<void> {
         if (settings.leagueFilters.length > 0 && !settings.leagueFilters.includes(event.league)) continue;
 
         recordOpeningSnapshot(event);
+        maybeUpdateDriftFromEvent(event);
         const openSnap = store.getOpening(event.eventTicker);
         if (openSnap) event.openingSnapshot = openSnap;
 
-        const stratResults: StrategyResult[] = [];
-        if (settings.enabledStrategies.bloat_no) {
-          const r = runBloatNo(event);
-          if (r) stratResults.push(r);
-        }
-        if (settings.enabledStrategies.lay_draw) {
-          const r = runLayDraw(event);
-          if (r) stratResults.push(r);
-        }
-        if (settings.enabledStrategies.pre_goal_back) {
-          const r = runPreGoalBack(event);
-          if (r) stratResults.push(r);
-        }
-        if (settings.enabledStrategies.spread_scalp) {
-          const r = runSpreadScalp(event);
-          if (r) stratResults.push(r);
-        }
-        if (settings.enabledStrategies.external_misprice) {
-          const r = runExternalMisprice(event, settings.oddsApiKey);
-          if (r) stratResults.push(r);
-        }
-        if (settings.enabledStrategies.open_drift_favorite) {
-          const r = runOpenDriftFavorite(event);
-          if (r) stratResults.push(r);
-        }
-
-        const pxReport = store.getTodayReport();
-        const pxFocus = pxReport?.focusEvents.find((f) => f.eventTicker === event.eventTicker);
-        const pxScore = pxFocus ? pxFocus.actionabilityScore / 10 : 0;
-
-        const { compositeScore, heatmapBreakdown } = computeCompositeScore(
-          stratResults,
-          pxScore,
-          settings.perplexityWeight,
-        );
+        const stratResults = runAllStrategies(event, settings);
+        const pxScore = getPerplexityScore(event.eventTicker);
+        const compositeScore = computeCompositeScore(stratResults, pxScore, settings);
 
         event.latestCompositeScore = compositeScore;
-        event.latestHeatmapBreakdown = heatmapBreakdown;
+        event.latestHeatmapBreakdown = flattenHeatmap(stratResults);
         event.detectedStrategies = stratResults.map((r) => r.strategyKey);
         store.upsertEvent(event);
         eventList.push(event);
 
         for (const result of stratResults) {
+          const isResearch = result.strategyKey === "open_drift_favorite";
           const meetsThreshold =
-            result.score >= settings.minCompositeScore ||
-            result.strategyKey === "open_drift_favorite";
-
+            result.score >= settings.minCompositeScore || isResearch;
           if (!meetsThreshold) continue;
 
-          // Initial status — bot.routeSignal may upgrade this
           const initialStatus =
-            result.strategyKey === "open_drift_favorite"
+            isResearch || compositeScore < settings.minCompositeScore
               ? "observed_only"
-              : compositeScore < settings.minCompositeScore
-                ? "observed_only"
-                : "pending_confirm";
+              : "pending_confirm";
+
+          const existing = store
+            .getAllSignals()
+            .find(
+              (s) =>
+                s.eventTicker === event.eventTicker &&
+                s.strategy === result.strategyKey &&
+                (s.status === "pending_confirm" ||
+                  s.status === "observed_only" ||
+                  s.status === "active"),
+            );
+          if (existing) continue;
 
           const sig: Omit<Signal, "id" | "detectedAt"> = {
             eventTicker: event.eventTicker,
@@ -146,7 +149,7 @@ export async function runScan(): Promise<void> {
             favoriteProb: event.favoriteProb,
             edgePercent: result.edgePercent,
             bloatScore: result.strategyKey === "bloat_no" ? result.score : 0,
-            perplexityContextScore: pxScore * 10,
+            perplexityContextScore: pxScore,
             compositeScore,
             riskScore: result.riskScore,
             actionability: result.actionability,
@@ -156,26 +159,19 @@ export async function runScan(): Promise<void> {
             ticker: event.markets[0]?.ticker,
           };
 
-          // Deduplicate — only create if no active/pending signal already exists
-          const existing = store
-            .getAllSignals()
-            .find(
-              (s) =>
-                s.eventTicker === event.eventTicker &&
-                s.strategy === result.strategyKey &&
-                (s.status === "pending_confirm" ||
-                  s.status === "observed_only" ||
-                  s.status === "active"),
-            );
+          const created = store.createSignal(sig);
+          newSignals++;
 
-          if (!existing) {
-            const created = store.createSignal(sig);
-            newSignals++;
-            // Delegate bot routing — handles confirm vs auto-trade logic
-            if (initialStatus === "pending_confirm") {
-              routeSignal(created).catch((e) =>
-                console.error("[scanner] routeSignal error:", e),
-              );
+          if (initialStatus === "pending_confirm") {
+            try {
+              const maybe = routeSignal(created);
+              if (maybe && typeof (maybe as any).catch === "function") {
+                (maybe as Promise<void>).catch((e) =>
+                  console.error("[scanner] routeSignal error:", e),
+                );
+              }
+            } catch (e) {
+              console.error("[scanner] routeSignal threw:", e);
             }
           }
         }
@@ -197,34 +193,30 @@ export async function runScan(): Promise<void> {
           store.upsertDailyOpportunity(opp);
         }
       } catch (err) {
-        failCount++;
         addError(
-          `Event normalization failed for ${data.event?.event_ticker}: ${err instanceof Error ? err.message : String(err)}`,
+          `Event ${data.event?.event_ticker ?? "?"}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
     store.clearOldEvents();
 
-    scannerStatus.eventsScanned = eventList.length;
     scannerStatus.normalizedEventCount = eventList.length;
-    scannerStatus.failedNormalizationCount = failCount;
-    scannerStatus.signalsGenerated += newSignals;
-    scannerStatus.lastScan = new Date();
+    scannerStatus.signalCount += newSignals;
+    scannerStatus.lastScanAt = new Date();
 
     console.log(
-      `[scanner] Scan complete: ${eventList.length} events, ${newSignals} new signals, ${failCount} failed`,
+      `[scanner] complete — ${eventList.length} events, ${newSignals} new signals`,
     );
 
     if (shouldRunDailyReport()) {
       const topEvents = [...eventList]
         .sort((a, b) => b.latestCompositeScore - a.latestCompositeScore)
         .slice(0, 20);
-      generateDailyReport(topEvents).catch((err) => addError(`Perplexity report error: ${err}`));
+      generateDailyReport(topEvents).catch((err) => addError(`Perplexity error: ${err}`));
     }
   } finally {
     isScanning = false;
-    scannerStatus.lastScan = new Date();
   }
 }
 
@@ -233,7 +225,7 @@ export function startScanner(): void {
 
   const schedule = () => {
     const intervalMs = store.getSettings().scanIntervalSec * 1000;
-    scannerStatus.nextScan = new Date(Date.now() + intervalMs);
+    scannerStatus.nextScanAt = new Date(Date.now() + intervalMs);
     scanTimer = setTimeout(async () => {
       if (!store.getSettings().scanEnabled) {
         schedule();
@@ -242,13 +234,15 @@ export function startScanner(): void {
       try {
         await runScan();
       } catch (err) {
-        addError(`Scan loop error: ${err}`);
+        addError(`Scan loop error: ${err instanceof Error ? err.message : String(err)}`);
       }
       schedule();
     }, intervalMs);
   };
 
-  runScan().catch((err) => addError(`Initial scan error: ${err}`));
+  runScan().catch((err) =>
+    addError(`Initial scan error: ${err instanceof Error ? err.message : String(err)}`),
+  );
   schedule();
 }
 

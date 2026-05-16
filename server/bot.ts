@@ -24,7 +24,7 @@ function isEligible(sig: Signal): boolean {
 }
 
 // ── Core: place an order for a signal ─────────────────────────────────────────
-async function executeSignalOrder(
+export async function executeSignalOrder(
   sig: Signal,
   isAuto: boolean,
 ): Promise<{ success: boolean; error?: string }> {

@@ -1,204 +1,241 @@
-import type { NormalizedEvent, StrategyResult, HeatmapReason } from "../shared/types";
+import type {
+  NormalizedEvent,
+  StrategyResult,
+  Settings,
+  HeatmapReason,
+} from "../shared/types";
+import { store } from "./storage";
 
-function clamp(v: number, min = 0, max = 100): number {
-  return Math.min(max, Math.max(min, v));
-}
+export function bloatNoStrategy(event: NormalizedEvent): StrategyResult | null {
+  if (!event.isLive) return null;
+  if (event.minuteEstimate < 20) return null;
+  if (event.favoriteProb <= 0.72) return null;
 
-export function runBloatNo(event: NormalizedEvent): StrategyResult | null {
-  const { favoriteProb, minuteEstimate, isLive } = event;
-  if (!isLive) return null;
-  if (favoriteProb < 0.55) return null;
+  const overpriceMagnitude = (event.favoriteProb - 0.72) / 0.28;
+  const minuteFactor = Math.min(1, (event.minuteEstimate - 20) / 40);
+  const bloatScore = Math.round(
+    Math.min(100, overpriceMagnitude * 70 + minuteFactor * 30),
+  );
 
-  const base = clamp((favoriteProb - 0.5) * 200);
-  let timingBonus = 0;
-  if (minuteEstimate >= 75) timingBonus = 25;
-  else if (minuteEstimate >= 65) timingBonus = 15;
-  else if (minuteEstimate >= 55) timingBonus = 5;
+  const edgePercent = Math.round((event.favoriteProb - 0.72) * 100);
 
-  const bloatScore = clamp(base + timingBonus);
-  if (bloatScore < 20) return null;
-
-  const noPrice = 1 - favoriteProb;
-  const edgePercent = clamp((noPrice - 0.2) * 100, 0, 60);
-  const riskScore = favoriteProb > 0.8 ? 70 : favoriteProb > 0.7 ? 50 : 30;
-  const actionability = clamp(bloatScore - riskScore / 2);
-
-  const reasons: HeatmapReason[] = [
-    { key: "bloat", score: bloatScore, label: `Favorite at ${(favoriteProb * 100).toFixed(0)}% — inflated` },
+  const heatmapReasons: HeatmapReason[] = [
     {
-      key: "timing",
-      score: timingBonus > 0 ? 70 : 30,
-      label: minuteEstimate >= 65 ? `Late game min ~${minuteEstimate}` : `Mid game min ~${minuteEstimate}`,
+      key: "favorite_overpriced",
+      score: Math.round(overpriceMagnitude * 100),
+      label: `Favorite at ${(event.favoriteProb * 100).toFixed(0)}% (>72% threshold)`,
     },
-    { key: "risk", score: -riskScore, label: riskScore > 50 ? "High favorite — reversal risk" : "Moderate risk" },
+    {
+      key: "live_clock",
+      score: Math.round(minuteFactor * 100),
+      label: `Live @ minute ${event.minuteEstimate}`,
+    },
   ];
 
   return {
     strategyKey: "bloat_no",
     score: bloatScore,
     edgePercent,
-    riskScore,
-    actionability,
-    sideRecommendation: "NO on favorite",
-    heatmapReasons: reasons,
-    explanation: `Favorite at ${(favoriteProb * 100).toFixed(0)}% in minute ~${minuteEstimate}. Bloat score ${bloatScore}. Selling inflated favorite probability.`,
+    riskScore: 35,
+    actionability: Math.min(100, bloatScore + 10),
+    sideRecommendation: `NO ${event.favoriteSide}`,
+    heatmapReasons,
+    explanation: `Favorite overpriced at ${(event.favoriteProb * 100).toFixed(0)}% with ${event.minuteEstimate}min played — sell NO ${event.favoriteSide}`,
   };
 }
 
-export function runLayDraw(event: NormalizedEvent): StrategyResult | null {
-  const { sport, marketType, drawProb, minuteEstimate, isLive } = event;
-  if (sport !== "Soccer") return null;
-  if (marketType !== "three_way") return null;
-  if (!drawProb) return null;
-  if (!isLive) return null;
+export function layDrawStrategy(event: NormalizedEvent): StrategyResult | null {
+  if (event.marketType !== "three_way") return null;
+  if (event.drawProb === undefined) return null;
+  if (event.drawProb >= 0.15) return null;
+  if (event.favoriteProb <= 0.65) return null;
 
-  const drawSticky = drawProb > 0.25 && drawProb < 0.45;
-  const lateGame = minuteEstimate >= 60;
-  if (!drawSticky && !lateGame) return null;
+  const drawUnderpriceFactor = (0.15 - event.drawProb) / 0.15;
+  const favStrength = (event.favoriteProb - 0.65) / 0.35;
+  const score = Math.round(
+    Math.min(100, drawUnderpriceFactor * 60 + favStrength * 40),
+  );
+  const edgePercent = Math.round((0.15 - event.drawProb) * 100);
 
-  const score = clamp(drawProb * 150 + (lateGame ? 20 : 0));
-  const edgePercent = clamp((0.4 - drawProb) * 100, 0, 40);
-  const riskScore = 35;
-  const actionability = clamp(score - riskScore);
-
-  const reasons: HeatmapReason[] = [
-    { key: "draw_sticky", score: drawSticky ? 70 : 40, label: `Draw at ${(drawProb * 100).toFixed(0)}% — sticky` },
-    { key: "timing", score: lateGame ? 65 : 40, label: lateGame ? "Late game — goal likely soon" : "Mid game" },
-    { key: "risk", score: -riskScore, label: "Draw markets can whipsaw" },
+  const heatmapReasons: HeatmapReason[] = [
+    {
+      key: "draw_underpriced",
+      score: Math.round(drawUnderpriceFactor * 100),
+      label: `Draw at ${(event.drawProb * 100).toFixed(0)}%`,
+    },
+    {
+      key: "strong_favorite",
+      score: Math.round(favStrength * 100),
+      label: `Favorite ${(event.favoriteProb * 100).toFixed(0)}%`,
+    },
   ];
 
   return {
     strategyKey: "lay_draw",
     score,
     edgePercent,
-    riskScore,
-    actionability,
-    sideRecommendation: "NO on Draw",
-    heatmapReasons: reasons,
-    explanation: `Draw at ${(drawProb * 100).toFixed(0)}% in minute ~${minuteEstimate}. Sticky draw price before likely goal-driven repricing.`,
+    riskScore: 45,
+    actionability: Math.min(100, score),
+    sideRecommendation: "YES Draw",
+    heatmapReasons,
+    explanation: `Draw underpriced @ ${(event.drawProb * 100).toFixed(0)}% with strong favorite`,
   };
 }
 
-export function runPreGoalBack(event: NormalizedEvent): StrategyResult | null {
-  const { sport, favoriteProb, drawProb, minuteEstimate, isLive } = event;
-  if (sport !== "Soccer") return null;
-  if (!isLive) return null;
-  if (!drawProb) return null;
+export function preGoalBackStrategy(event: NormalizedEvent): StrategyResult | null {
+  if (!event.isLive) return null;
+  if (event.minuteEstimate >= 30) return null;
+  if (event.favoriteProb < 0.52 || event.favoriteProb > 0.68) return null;
 
-  const closeGame = favoriteProb < 0.65 && favoriteProb > 0.4;
-  const earlyOrMid = minuteEstimate < 60 && minuteEstimate > 10;
-  if (!closeGame || !earlyOrMid) return null;
+  const sweetSpot = 1 - Math.abs(event.favoriteProb - 0.6) / 0.08;
+  const earlyClock = (30 - event.minuteEstimate) / 30;
+  const score = Math.round(Math.min(100, sweetSpot * 60 + earlyClock * 40));
+  const edgePercent = Math.round((0.68 - event.favoriteProb) * 100);
 
-  const score = clamp((0.65 - favoriteProb) * 150 + (drawProb > 0.3 ? 15 : 0));
-  if (score < 20) return null;
-
-  const edgePercent = clamp((0.65 - favoriteProb) * 80, 0, 30);
-  const riskScore = 45;
-  const actionability = clamp(score - riskScore);
-
-  const reasons: HeatmapReason[] = [
-    { key: "pre_goal", score, label: `Close game — back underdog before repricing` },
-    { key: "timing", score: 60, label: `Min ~${minuteEstimate} — early enough for value` },
-    { key: "risk", score: -riskScore, label: "Score-feed uncertainty — research mode" },
+  const heatmapReasons: HeatmapReason[] = [
+    {
+      key: "favorite_sweet_spot",
+      score: Math.round(sweetSpot * 100),
+      label: `Favorite at ${(event.favoriteProb * 100).toFixed(0)}% (52-68% zone)`,
+    },
+    {
+      key: "early_clock",
+      score: Math.round(earlyClock * 100),
+      label: `Pre-30min mark (currently ${event.minuteEstimate}min)`,
+    },
   ];
 
   return {
     strategyKey: "pre_goal_back",
     score,
     edgePercent,
-    riskScore,
-    actionability: Math.min(actionability, 40),
-    sideRecommendation: "YES on underdog",
-    heatmapReasons: reasons,
-    explanation: `Close game at min ~${minuteEstimate}. Favorite at ${(favoriteProb * 100).toFixed(0)}%. May be underpriced underdog.`,
+    riskScore: 50,
+    actionability: Math.min(100, score - 5),
+    sideRecommendation: `YES ${event.favoriteSide}`,
+    heatmapReasons,
+    explanation: `Back favorite pre-goal — early clock, sweet-spot probability`,
   };
 }
 
-export function runSpreadScalp(event: NormalizedEvent): StrategyResult | null {
-  const { markets } = event;
-  if (markets.length < 2) return null;
+export function spreadScalpStrategy(event: NormalizedEvent): StrategyResult | null {
+  if (event.marketType !== "spread") return null;
+  if (event.markets.length < 2) return null;
 
-  const mainMarket = markets[0];
-  const spread = mainMarket.yesPrice + mainMarket.noPrice;
-  const spreadDeviation = Math.abs(spread - 1.0);
+  const sorted = [...event.markets].sort((a, b) => b.yesPrice - a.yesPrice);
+  const top = sorted[0];
+  const next = sorted[1];
+  const diff = Math.abs(top.yesPrice - next.yesPrice);
+  if (diff < 0.08) return null;
 
-  if (spreadDeviation < 0.05) return null;
+  const score = Math.round(Math.min(100, diff * 400));
+  const edgePercent = Math.round(diff * 100);
 
-  const score = clamp(spreadDeviation * 500);
-  if (score < 20) return null;
-
-  const edgePercent = clamp((spreadDeviation * 100) / 2, 0, 25);
-  const riskScore = 30;
-  const actionability = clamp(score - riskScore) * 0.7;
-
-  const reasons: HeatmapReason[] = [
-    { key: "spread", score, label: `Spread deviation ${(spreadDeviation * 100).toFixed(1)}% — exploitable gap` },
-    { key: "risk", score: -riskScore, label: "Scalp requires fast execution" },
+  const heatmapReasons: HeatmapReason[] = [
+    {
+      key: "spread_gap",
+      score: Math.round(diff * 100),
+      label: `Spread gap ${(diff * 100).toFixed(1)}%`,
+    },
   ];
 
   return {
     strategyKey: "spread_scalp",
     score,
     edgePercent,
-    riskScore,
-    actionability,
-    sideRecommendation: mainMarket.yesPrice < 0.5 ? "YES (underpriced)" : "NO (overpriced)",
-    heatmapReasons: reasons,
-    explanation: `Yes+No = ${(spread * 100).toFixed(0)}%. ${(spreadDeviation * 100).toFixed(1)}% spread deviation suggests scalp opportunity.`,
+    riskScore: 40,
+    actionability: Math.min(100, score),
+    sideRecommendation: `YES ${top.subtitle || top.title}`,
+    heatmapReasons,
+    explanation: `Spread scalp — top line ${(top.yesPrice * 100).toFixed(0)}¢ vs next ${(next.yesPrice * 100).toFixed(0)}¢`,
   };
 }
 
-export function runExternalMisprice(_event: NormalizedEvent, oddsApiKey?: string): StrategyResult | null {
-  if (!oddsApiKey) return null;
+export function externalMispriceStrategy(event: NormalizedEvent): StrategyResult | null {
+  if (!process.env.ODDS_API_KEY) return null;
+  void event;
   return null;
 }
 
-export function runOpenDriftFavorite(event: NormalizedEvent): StrategyResult | null {
-  const { openingSnapshot, favoriteProb } = event;
-  if (!openingSnapshot) return null;
-  if (!openingSnapshot.near5050AtOpen) return null;
+export function openDriftFavoriteStrategy(event: NormalizedEvent): StrategyResult | null {
+  const opening = store.getOpening(event.eventTicker);
+  if (!opening) return null;
+  if (!opening.near5050AtOpen) return null;
 
-  const drift = favoriteProb - openingSnapshot.firstYesPrice;
-  if (Math.abs(drift) < 0.05) return null;
+  const drift = Math.abs(event.favoriteProb - opening.firstYesPrice);
+  if (drift < 0.10) return null;
 
-  const score = clamp(Math.abs(drift) * 300, 0, 80);
-  const researchScore = clamp(score);
+  const score = Math.round(Math.min(100, drift * 200));
 
-  const reasons: HeatmapReason[] = [
-    { key: "drift", score, label: `Drifted ${(drift * 100).toFixed(0)}% from 50/50 open` },
-    { key: "research", score: 50, label: "Research mode — tracking open favorite hypothesis" },
+  const heatmapReasons: HeatmapReason[] = [
+    {
+      key: "opening_drift",
+      score,
+      label: `Drifted ${(drift * 100).toFixed(0)}pts from opening`,
+    },
   ];
 
   return {
     strategyKey: "open_drift_favorite",
-    score: researchScore,
-    edgePercent: 0,
-    riskScore: 20,
+    score,
+    edgePercent: Math.round(drift * 100),
+    riskScore: 60,
     actionability: 0,
-    sideRecommendation: drift > 0 ? "Research: YES drifting up" : "Research: YES drifting down",
-    heatmapReasons: reasons,
-    explanation: `Opened near 50/50 (${(openingSnapshot.firstYesPrice * 100).toFixed(0)}%). Now at ${(favoriteProb * 100).toFixed(0)}%. Drift of ${(drift * 100).toFixed(0)}%. Tracking for research.`,
+    sideRecommendation: `OBSERVE ${event.favoriteSide}`,
+    heatmapReasons,
+    explanation: `Research-only: opened near 50/50, drifted ${(drift * 100).toFixed(0)}pts`,
   };
+}
+
+const STRATEGIES: Array<{
+  key: keyof Settings["enabledStrategies"];
+  fn: (e: NormalizedEvent) => StrategyResult | null;
+}> = [
+  { key: "bloat_no", fn: bloatNoStrategy },
+  { key: "lay_draw", fn: layDrawStrategy },
+  { key: "pre_goal_back", fn: preGoalBackStrategy },
+  { key: "spread_scalp", fn: spreadScalpStrategy },
+  { key: "external_misprice", fn: externalMispriceStrategy },
+  { key: "open_drift_favorite", fn: openDriftFavoriteStrategy },
+];
+
+export function runAllStrategies(event: NormalizedEvent, settings: Settings): StrategyResult[] {
+  const results: StrategyResult[] = [];
+  for (const s of STRATEGIES) {
+    if (!settings.enabledStrategies[s.key]) continue;
+    try {
+      const r = s.fn(event);
+      if (r) results.push(r);
+    } catch {
+      // ignore individual strategy failures
+    }
+  }
+  return results;
+}
+
+export function getPerplexityScore(eventTicker: string): number {
+  const report = store.getTodayReport();
+  if (!report) return 0;
+  const focus = report.focusEvents.find((f) => f.eventTicker === eventTicker);
+  if (!focus) return 0;
+  return Math.round(
+    focus.mispricingNarrativeScore * 0.5 +
+      focus.newsShockScore * 0.3 +
+      focus.actionabilityScore * 0.2,
+  );
 }
 
 export function computeCompositeScore(
   results: StrategyResult[],
   perplexityScore: number,
-  perplexityWeight: number,
-): { compositeScore: number; heatmapBreakdown: HeatmapReason[] } {
-  if (results.length === 0) return { compositeScore: 0, heatmapBreakdown: [] };
-
-  const allReasons: HeatmapReason[] = results.flatMap((r) => r.heatmapReasons);
-
-  const avgScore = results.reduce((s, r) => s + r.score, 0) / results.length;
-  const avgRisk = results.reduce((s, r) => s + r.riskScore, 0) / results.length;
-
-  const pxContrib = perplexityScore * perplexityWeight * 100;
-  const composite = clamp(avgScore * (1 - perplexityWeight) + pxContrib - avgRisk * 0.3);
-
-  if (perplexityScore > 0) {
-    allReasons.push({ key: "perplexity", score: Math.round(pxContrib), label: "Perplexity context adds signal" });
-  }
-
-  return { compositeScore: Math.round(composite), heatmapBreakdown: allReasons };
+  settings: Settings,
+): number {
+  if (results.length === 0 && perplexityScore === 0) return 0;
+  const actionable = results.filter((r) => r.actionability > 0);
+  const candidates = actionable.length ? actionable : results;
+  let topScore = 0;
+  for (const r of candidates) if (r.score > topScore) topScore = r.score;
+  const breadthBonus = Math.min(20, Math.max(0, results.length - 1) * 5);
+  const perplexityBoost = perplexityScore * (settings.perplexityWeight ?? 0);
+  const composite = topScore + breadthBonus + perplexityBoost;
+  return Math.min(100, Math.round(composite));
 }
