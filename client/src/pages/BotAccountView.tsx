@@ -421,6 +421,39 @@ export function BotAccountView() {
                 onChange={() => patchSettings({ confirmMode: !settings?.confirmMode })}
               />
 
+              {/* ── Mode description banner ── */}
+              {bot?.modeDescription && (
+                <div style={{
+                  margin: "8px 0 4px",
+                  padding: "8px 10px",
+                  borderRadius: 3,
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                  background:
+                    bot.mode === "auto_trade"     ? "#00100a" :
+                    bot.mode === "manual_confirm" ? "#0d0c00" :
+                    bot.mode === "no_creds"       ? "#1a0000" :
+                    "var(--bg-elevated)",
+                  border:
+                    bot.mode === "auto_trade"     ? "1px solid var(--green)" :
+                    bot.mode === "manual_confirm" ? "1px solid var(--amber)" :
+                    bot.mode === "no_creds"       ? "1px solid var(--red)" :
+                    "1px solid var(--border-dim)",
+                  color:
+                    bot.mode === "auto_trade"     ? "var(--green)" :
+                    bot.mode === "manual_confirm" ? "var(--amber)" :
+                    bot.mode === "no_creds"       ? "var(--red)" :
+                    "var(--text-dim)",
+                  fontFamily: "var(--mono)",
+                }}>
+                  {bot.mode === "auto_trade" && "⚡ AUTO-MODE: "}
+                  {bot.mode === "manual_confirm" && "✋ CONFIRM-MODE: "}
+                  {bot.mode === "no_creds" && "⚠ NO CREDENTIALS: "}
+                  {bot.mode === "disabled" && "⭘ DISABLED: "}
+                  {bot.modeDescription}
+                </div>
+              )}
+
               <div
                 style={{
                   padding: "10px 0",
@@ -517,7 +550,8 @@ export function BotAccountView() {
             >
               {(
                 [
-                  ["ACTIVE BETS", bot?.activeBets ?? 0, "var(--cyan)"],
+                  // activeBets derived from real account positions
+                  ["ACTIVE BETS", account?.connected ? (account?.openPositionsCount ?? bot?.activeBets ?? 0) : (bot?.activeBets ?? 0), "var(--cyan)"],
                   ["PENDING", bot?.pendingConfirmations ?? 0, "var(--amber)"],
                   ["SKIPPED", bot?.totalSkipped ?? 0, "var(--text-dim)"],
                 ] as Array<[string, number, string]>
@@ -548,8 +582,39 @@ export function BotAccountView() {
             </div>
           </div>
 
+          {/* Auto-trade stats — only shown in auto-mode */}
+          {bot?.mode === "auto_trade" && (
+            <div style={{
+              ...panel,
+              padding: "10px 14px",
+              display: "flex",
+              gap: 20,
+              alignItems: "center",
+            }}>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.1em" }}>AUTO TRADES:</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700, color: "var(--green)" }}>{bot?.totalAutoTrades ?? 0}</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 9, color: "var(--text-dim)", letterSpacing: "0.1em", marginLeft: 12 }}>MANUAL:</span>
+              <span style={{ fontFamily: "var(--mono)", fontSize: 16, fontWeight: 700, color: "var(--cyan)" }}>{bot?.totalManualTrades ?? 0}</span>
+            </div>
+          )}
+
           <div style={panel}>
             {sectionHdr(`PENDING CONFIRMS (${pending.length})`)}
+            {/* Show note when in auto-mode that pending confirms won't accumulate */}
+            {bot?.mode === "auto_trade" && (
+              <div style={{
+                margin: "8px 10px 0",
+                padding: "6px 10px",
+                background: "#00100a",
+                border: "1px solid var(--green)",
+                borderRadius: 3,
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                color: "var(--green)",
+              }}>
+                Auto-mode is ON — eligible signals are traded automatically and will appear in Recent Bot Actions below, not here.
+              </div>
+            )}
             {pending.length === 0 ? (
               <div
                 style={{
@@ -559,7 +624,7 @@ export function BotAccountView() {
                   textAlign: "center",
                 }}
               >
-                No pending confirmations
+                {bot?.mode === "auto_trade" ? "No signals awaiting manual confirmation." : "No pending confirmations"}
               </div>
             ) : (
               <div style={{ maxHeight: 320, overflowY: "auto" }}>
