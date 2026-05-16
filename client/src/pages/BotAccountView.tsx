@@ -124,17 +124,21 @@ export function BotAccountView() {
   const { data: credStatus } = useQuery({
     queryKey: ["cred-status"],
     queryFn: api.getCredStatus,
-    refetchInterval: 30_000,
+    refetchInterval: 20_000,
   });
-  const { data: account } = useQuery({
+  const isConnected = credStatus?.connected ?? false;
+
+  const { data: account, isFetching: accountFetching } = useQuery({
     queryKey: ["account-summary"],
     queryFn: api.getAccountSummary,
-    refetchInterval: 45_000,
+    refetchInterval: isConnected ? 45_000 : false,
+    enabled: isConnected,
   });
-  const { data: posData } = useQuery({
+  const { data: posData, isFetching: posFetching } = useQuery({
     queryKey: ["positions"],
     queryFn: api.getPositions,
-    refetchInterval: 45_000,
+    refetchInterval: isConnected ? 45_000 : false,
+    enabled: isConnected,
   });
 
   const refreshAcct = useMutation({
@@ -142,6 +146,7 @@ export function BotAccountView() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["account-summary"] });
       qc.invalidateQueries({ queryKey: ["positions"] });
+      qc.invalidateQueries({ queryKey: ["cred-status"] });
     },
   });
 
@@ -163,7 +168,7 @@ export function BotAccountView() {
     }
   }
 
-  const hasCreds = credStatus?.hasCredentials;
+  const hasCreds = isConnected; // use richer connected field, not just hasCredentials
   const positions: any[] = posData?.positions ?? [];
 
   const panel = {
@@ -236,64 +241,152 @@ export function BotAccountView() {
           </div>,
         )}
 
+        {/* ── Memory-only warning ── */}
+        {hasCreds && credStatus?.persistenceMode === "memory" && (
+          <div style={{
+            margin: "0 14px",
+            marginTop: 10,
+            padding: "6px 10px",
+            background: "#0f0e00",
+            border: "1px solid #3a3000",
+            borderRadius: 3,
+            fontFamily: "var(--mono)",
+            fontSize: 10,
+            color: "var(--amber)",
+            letterSpacing: "0.04em",
+          }}>
+            ⚠️ Credentials stored in server memory only — will clear on restart/redeploy. Re-enter in Settings if balance disappears.
+          </div>
+        )}
+
         {!hasCreds ? (
           <div style={{ padding: 24, textAlign: "center" }}>
-            <div
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                color: "var(--amber)",
-                marginBottom: 8,
-              }}
-            >
-              NO CREDENTIALS CONFIGURED
+            <div style={{ fontFamily: "var(--mono)", fontSize: 13, color: "var(--text-dim)", marginBottom: 10 }}>
+              No account connected
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              Add your Kalshi API key and private key in the Settings tab to see account data and enable trading.
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+              Add your Kalshi API Key ID and RSA Private Key in the{" "}
+              <strong style={{ color: "var(--cyan)" }}>Settings</strong> tab, then click TEST + SAVE.
             </div>
           </div>
-        ) : account?.error ? (
-          <div style={{ padding: 16 }}>
-            <div
-              style={{
-                fontFamily: "var(--mono)",
-                fontSize: 11,
-                color: "var(--red)",
-                marginBottom: 6,
-              }}
-            >
+        ) : accountFetching && !account ? (
+          <div style={{ padding: 20, fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-dim)" }}>
+            Loading account data…
+          </div>
+        ) : account?.error && !account.connected ? (
+          // Hard error (no last-known data available)
+          <div style={{ padding: "12px 16px" }}>
+            <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--red)", marginBottom: 6 }}>
               ACCOUNT FETCH ERROR
             </div>
-            <div style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--mono)" }}>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--mono)", lineHeight: 1.5 }}>
               {account.error}
             </div>
           </div>
         ) : (
-          <div
-            style={{
-              padding: 14,
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-              gap: 10,
-            }}
-          >
-            <StatTile
-              label="AVAILABLE BALANCE"
-              value={`$${(account?.balanceDollars ?? 0).toFixed(2)}`}
-              color="var(--green)"
-            />
-            <StatTile
-              label="PORTFOLIO VALUE"
-              value={`$${(account?.portfolioValueDollars ?? 0).toFixed(2)}`}
-            />
-            <StatTile
-              label="OPEN EXPOSURE"
-              value={`$${(account?.openExposureDollars ?? 0).toFixed(2)}`}
-              color="var(--amber)"
-            />
-            <StatTile label="OPEN POSITIONS" value={account?.openPositionsCount ?? 0} />
-            <PnlTile label="REALIZED P&L" value={account?.realizedPnlDollars ?? 0} />
-          </div>
+          <>
+            {account?.error && (
+              // Soft error — showing last known data
+              <div style={{
+                margin: "10px 14px 0",
+                padding: "6px 10px",
+                background: "#1a0000",
+                border: "1px solid #3a0000",
+                borderRadius: 3,
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                color: "var(--red)",
+              }}>
+                Account refresh failed — showing last known snapshot. {account.error.replace("Refresh failed — showing last known data. ", "")}
+              </div>
+            )}
+            <div
+              style={{
+                padding: 14,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <StatTile
+                label="AVAILABLE BALANCE"
+                value={account?.balanceDollars != null ? `$${account.balanceDollars.toFixed(2)}` : "—"}
+                color="var(--green)"
+              />
+              <StatTile
+                label="PORTFOLIO VALUE"
+                value={account?.portfolioValueDollars != null ? `$${account.portfolioValueDollars.toFixed(2)}` : "—"}
+              />
+              <StatTile
+                label="OPEN EXPOSURE"
+                value={account?.openExposureDollars != null ? `$${account.openExposureDollars.toFixed(2)}` : "—"}
+                color="var(--amber)"
+              />
+              <StatTile label="OPEN POSITIONS" value={account?.openPositionsCount ?? "—"} />
+              <PnlTile label="REALIZED P&L" value={account?.realizedPnlDollars ?? 0} />
+            </div>
+
+            {/* ── Positions table ── */}
+            <div style={{ padding: "0 14px 14px" }}>
+              <div style={{
+                fontFamily: "var(--mono)",
+                fontSize: 9,
+                letterSpacing: "0.12em",
+                color: "var(--text-dim)",
+                marginBottom: 8,
+                paddingBottom: 6,
+                borderBottom: "1px solid var(--border-dim)",
+              }}>
+                OPEN POSITIONS {posFetching ? "— updating…" : `— ${positions.length}`}
+              </div>
+              {positions.length === 0 ? (
+                <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "8px 0" }}>
+                  No open positions
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "var(--mono)" }}>
+                    <thead>
+                      <tr style={{ color: "var(--text-dim)", fontSize: 9, letterSpacing: "0.08em" }}>
+                        <th style={{ textAlign: "left", padding: "4px 8px 6px 0", fontWeight: 600 }}>MARKET</th>
+                        <th style={{ textAlign: "center", padding: "4px 8px 6px", fontWeight: 600 }}>SIDE</th>
+                        <th style={{ textAlign: "right", padding: "4px 8px 6px", fontWeight: 600 }}>SHARES</th>
+                        <th style={{ textAlign: "right", padding: "4px 8px 6px", fontWeight: 600 }}>EXPOSURE</th>
+                        <th style={{ textAlign: "right", padding: "4px 0 6px 8px", fontWeight: 600 }}>P&L</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {positions.map((p: any, i: number) => {
+                        const pnl = p.realizedPnlDollars ?? 0;
+                        const pnlColor = pnl > 0 ? "var(--green)" : pnl < 0 ? "var(--red)" : "var(--text-dim)";
+                        const pnlStr = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`;
+                        const sideColor = p.side === "yes" ? "var(--green)" : p.side === "no" ? "var(--red)" : "var(--amber)";
+                        return (
+                          <tr key={p.ticker ?? i} style={{ borderTop: "1px solid var(--border-dim)" }}>
+                            <td style={{ padding: "6px 8px 6px 0", color: "var(--text-primary)", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {p.marketTitle || p.ticker}
+                            </td>
+                            <td style={{ textAlign: "center", padding: "6px 8px", color: sideColor, fontWeight: 700, letterSpacing: "0.06em" }}>
+                              {(p.side ?? "?").toUpperCase()}
+                            </td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "var(--text-secondary)" }}>
+                              {p.positionShares ?? 0}
+                            </td>
+                            <td style={{ textAlign: "right", padding: "6px 8px", color: "var(--amber)" }}>
+                              ${(p.marketExposureDollars ?? 0).toFixed(2)}
+                            </td>
+                            <td style={{ textAlign: "right", padding: "6px 0 6px 8px", color: pnlColor, fontWeight: 600 }}>
+                              {pnlStr}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
 
@@ -566,167 +659,6 @@ export function BotAccountView() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={panel}>
-            {sectionHdr(`OPEN POSITIONS (${positions.length})`)}
-            {!hasCreds ? (
-              <div
-                style={{
-                  padding: 20,
-                  fontSize: 11,
-                  color: "var(--text-dim)",
-                  textAlign: "center",
-                }}
-              >
-                Connect credentials in Settings to see positions.
-              </div>
-            ) : positions.length === 0 ? (
-              <div style={{ padding: "24px 14px", textAlign: "center" }}>
-                <div
-                  style={{
-                    fontFamily: "var(--mono)",
-                    fontSize: 11,
-                    color: "var(--text-dim)",
-                    marginBottom: 6,
-                  }}
-                >
-                  NO OPEN POSITIONS
-                </div>
-                <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-                  {account?.balanceDollars != null &&
-                    `Balance: $${account.balanceDollars.toFixed(2)} available`}
-                </div>
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr
-                      style={{
-                        borderBottom: "1px solid var(--border-dim)",
-                        background: "var(--bg-card)",
-                      }}
-                    >
-                      {["MARKET", "SIDE", "SHARES", "EXPOSURE", "REALIZED P&L", "FEES"].map((h) => (
-                        <th
-                          key={h}
-                          style={{
-                            padding: "7px 12px",
-                            fontFamily: "var(--mono)",
-                            fontSize: 9,
-                            color: "var(--text-dim)",
-                            textAlign: "left",
-                            letterSpacing: "0.1em",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {positions.map((p: any) => {
-                      const pnlColor =
-                        p.realizedPnlDollars > 0
-                          ? "var(--green)"
-                          : p.realizedPnlDollars < 0
-                            ? "var(--red)"
-                            : "var(--text-dim)";
-                      const pnlStr =
-                        p.realizedPnlDollars >= 0
-                          ? `+$${p.realizedPnlDollars.toFixed(2)}`
-                          : `-$${Math.abs(p.realizedPnlDollars).toFixed(2)}`;
-                      return (
-                        <tr key={p.ticker} style={{ borderBottom: "1px solid var(--border-dim)" }}>
-                          <td style={{ padding: "9px 12px" }}>
-                            <div style={{ fontSize: 12, color: "var(--text-primary)" }}>
-                              {p.marketTitle || p.ticker}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 9,
-                                fontFamily: "var(--mono)",
-                                color: "var(--text-dim)",
-                                marginTop: 2,
-                              }}
-                            >
-                              {p.ticker}
-                            </div>
-                          </td>
-                          <td style={{ padding: "9px 12px" }}>
-                            <span
-                              style={{
-                                fontFamily: "var(--mono)",
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: "2px 7px",
-                                borderRadius: 2,
-                                background:
-                                  p.side === "yes"
-                                    ? "var(--green-dim)"
-                                    : p.side === "no"
-                                      ? "var(--red-dim)"
-                                      : "var(--bg-elevated)",
-                                color:
-                                  p.side === "yes"
-                                    ? "var(--green)"
-                                    : p.side === "no"
-                                      ? "var(--red)"
-                                      : "var(--text-secondary)",
-                              }}
-                            >
-                              {(p.side ?? "—").toUpperCase()}
-                            </span>
-                          </td>
-                          <td
-                            style={{
-                              padding: "9px 12px",
-                              fontFamily: "var(--mono)",
-                              fontSize: 12,
-                              color: "var(--text-secondary)",
-                            }}
-                          >
-                            {p.positionShares}
-                          </td>
-                          <td
-                            style={{
-                              padding: "9px 12px",
-                              fontFamily: "var(--mono)",
-                              fontSize: 12,
-                              color: "var(--amber)",
-                            }}
-                          >
-                            ${p.marketExposureDollars?.toFixed(2) ?? "0.00"}
-                          </td>
-                          <td
-                            style={{
-                              padding: "9px 12px",
-                              fontFamily: "var(--mono)",
-                              fontSize: 12,
-                              fontWeight: 700,
-                              color: pnlColor,
-                            }}
-                          >
-                            {pnlStr}
-                          </td>
-                          <td
-                            style={{
-                              padding: "9px 12px",
-                              fontFamily: "var(--mono)",
-                              fontSize: 11,
-                              color: "var(--text-dim)",
-                            }}
-                          >
-                            ${p.feesPaidDollars?.toFixed(2) ?? "0.00"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
 
           <div style={panel}>
             {sectionHdr("RECENT BOT ACTIONS")}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { api } from "../lib/api";
 
 const STRATEGIES: Array<{ key: string; label: string; desc: string }> = [
@@ -19,7 +19,9 @@ export function SettingsView() {
 
   const [apiKeyId, setApiKeyId] = useState("");
   const [pem, setPem] = useState("");
-  const [credResult, setCredResult] = useState<string | null>(null);
+  // credState: idle | testing | connected | error | cleared
+  const [credState, setCredState] = useState<"idle" | "testing" | "connected" | "error" | "cleared">("idle");
+  const [credMsg, setCredMsg] = useState<string | null>(null);
   const [credBalance, setCredBalance] = useState<number | null>(null);
 
   const [local, setLocal] = useState<any | null>(null);
@@ -43,59 +45,159 @@ export function SettingsView() {
   }
 
   async function testCreds() {
-    setCredResult("Testing…");
+    if (!apiKeyId.trim() || !pem.trim()) {
+      setCredState("error");
+      setCredMsg("Both API Key ID and Private Key are required.");
+      return;
+    }
+    setCredState("testing");
+    setCredMsg(null);
     setCredBalance(null);
     try {
-      const r = await api.setCredentials({ apiKeyId, privateKeyPem: pem });
+      const r = await api.setCredentials({ apiKeyId: apiKeyId.trim(), privateKeyPem: pem.trim() });
       if (r.valid) {
-        setCredResult("✓ Credentials valid");
-        setCredBalance(r.balance);
+        setCredState("connected");
+        setCredBalance(r.balanceDollars ?? (r.balanceCents ?? 0) / 100);
+        setCredMsg(r.warning ?? null);
         qc.invalidateQueries({ queryKey: ["cred-status"] });
+        qc.invalidateQueries({ queryKey: ["account-summary"] });
+        qc.invalidateQueries({ queryKey: ["positions"] });
+        qc.invalidateQueries({ queryKey: ["topbar-account"] });
       } else {
-        setCredResult("✗ Invalid: " + (r.error ?? "unknown"));
+        setCredState("error");
+        setCredMsg(r.error ?? "Validation failed");
       }
-    } catch (err) {
-      setCredResult("✗ Error: " + String(err));
+    } catch (err: any) {
+      setCredState("error");
+      // Parse clean error from API response
+      const raw = String(err);
+      const match = raw.match(/API \d+: (.*)/);
+      try {
+        const parsed = JSON.parse(match?.[1] ?? "");
+        setCredMsg(parsed.error ?? raw);
+      } catch {
+        setCredMsg(match?.[1] ?? raw);
+      }
     }
   }
 
   async function clearCreds() {
     await api.clearCredentials();
-    setCredResult("Cleared");
+    setCredState("cleared");
+    setCredMsg(null);
+    setCredBalance(null);
     setApiKeyId("");
     setPem("");
     qc.invalidateQueries({ queryKey: ["cred-status"] });
+    qc.invalidateQueries({ queryKey: ["account-summary"] });
+    qc.invalidateQueries({ queryKey: ["positions"] });
+    qc.invalidateQueries({ queryKey: ["topbar-account"] });
   }
 
   return (
     <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 18, maxWidth: 1100 }}>
       <Section title="Kalshi Credentials">
-        <Row label="STATUS">
-          <span style={{ color: credStatus?.hasCredentials ? "var(--green)" : "var(--text-dim)", fontFamily: "var(--mono)", fontSize: 12 }}>
-            {credStatus?.hasCredentials ? "CONFIGURED" : "NOT CONFIGURED"}
-          </span>
+        {/* ── Live server-side connection status ── */}
+        <Row label="SERVER STATUS">
+          <CredStatusBadge status={credStatus} localState={credState} />
         </Row>
+
+        {/* Memory-only persistence warning — always visible */}
+        <div style={{
+          margin: "10px 0 4px",
+          padding: "8px 12px",
+          background: "#0f0e00",
+          border: "1px solid #3a3000",
+          borderRadius: 3,
+          display: "flex",
+          gap: 8,
+          alignItems: "flex-start",
+        }}>
+          <span style={{ color: "var(--amber)", fontSize: 13, lineHeight: 1 }}>&#9888;</span>
+          <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--amber)", lineHeight: 1.5 }}>
+            Credentials are stored in server memory only and will clear on restart or redeploy.
+            Re-enter them after any server restart.
+          </span>
+        </div>
+
         <Row label="API KEY ID">
-          <input className="input" value={apiKeyId} onChange={(e) => setApiKeyId(e.target.value)} placeholder="UUID api key id" style={{ width: 360 }} />
+          <input
+            className="input"
+            value={apiKeyId}
+            onChange={(e) => setApiKeyId(e.target.value)}
+            placeholder="UUID api key id (e.g. 00000000-0000-…)"
+            style={{ width: 380 }}
+            autoComplete="off"
+          />
         </Row>
         <Row label="PRIVATE KEY (PEM)">
           <textarea
             className="textarea"
             value={pem}
             onChange={(e) => setPem(e.target.value)}
-            placeholder="-----BEGIN RSA PRIVATE KEY-----..."
-            rows={6}
-            style={{ width: 560 }}
+            placeholder={"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"}
+            rows={7}
+            style={{ width: 560, fontFamily: "var(--mono)", fontSize: 10 }}
+            autoComplete="off"
+            spellCheck={false}
           />
         </Row>
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button className="btn btn-cyan" onClick={testCreds}>TEST + SAVE</button>
-          <button className="btn btn-red" onClick={clearCreds}>CLEAR</button>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
+          <button
+            className="btn btn-cyan"
+            onClick={testCreds}
+            disabled={credState === "testing"}
+            style={{ minWidth: 120 }}
+          >
+            {credState === "testing" ? "TESTING…" : "TEST + SAVE"}
+          </button>
+          <button className="btn btn-red" onClick={clearCreds} disabled={credState === "testing"}>CLEAR</button>
         </div>
-        {credResult && (
-          <div style={{ marginTop: 10, fontFamily: "var(--mono)", fontSize: 12, color: credResult.startsWith("✓") ? "var(--green)" : "var(--red)" }}>
-            {credResult}
-            {credBalance !== null && <span style={{ marginLeft: 12, color: "var(--text-secondary)" }}>BALANCE: ${(credBalance / 100).toFixed(2)}</span>}
+
+        {/* Result feedback */}
+        {credState === "connected" && (
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{
+              padding: "10px 14px",
+              background: "#001a09",
+              border: "1px solid var(--green)",
+              borderRadius: 3,
+              fontFamily: "var(--mono)",
+              fontSize: 12,
+              color: "var(--green)",
+            }}>
+              ✓ CONNECTED TO KALSHI
+              {credBalance !== null && (
+                <span style={{ marginLeft: 16, color: "var(--text-secondary)" }}>
+                  BALANCE: <span style={{ color: "var(--green)" }}>${credBalance.toFixed(2)}</span>
+                </span>
+              )}
+            </div>
+            {credMsg && (
+              <div style={{ fontSize: 11, color: "var(--amber)", fontFamily: "var(--mono)" }}>
+                ⚠ {credMsg}
+              </div>
+            )}
+          </div>
+        )}
+        {credState === "error" && credMsg && (
+          <div style={{
+            marginTop: 12,
+            padding: "10px 14px",
+            background: "#1a0000",
+            border: "1px solid var(--red)",
+            borderRadius: 3,
+            fontFamily: "var(--mono)",
+            fontSize: 12,
+            color: "var(--red)",
+          }}>
+            ✗ {credMsg}
+          </div>
+        )}
+        {credState === "cleared" && (
+          <div style={{ marginTop: 12, fontFamily: "var(--mono)", fontSize: 12, color: "var(--text-dim)" }}>
+            Credentials cleared — account disconnected.
           </div>
         )}
       </Section>
@@ -210,6 +312,55 @@ export function SettingsView() {
     </div>
   );
 }
+
+// ── Credential status badge ──────────────────────────────────────────────────
+type LocalCredState = "idle" | "testing" | "connected" | "error" | "cleared";
+
+function CredStatusBadge({ status, localState }: { status: any; localState: LocalCredState }) {
+  // Local state (just tested) takes priority over server poll
+  if (localState === "testing") {
+    return <Badge color="var(--amber)" label="TESTING…" dot />
+  }
+  if (localState === "connected") {
+    return <Badge color="var(--green)" label="CONNECTED" dot />
+  }
+  if (localState === "error") {
+    return <Badge color="var(--red)" label="ERROR" />
+  }
+  if (localState === "cleared") {
+    return <Badge color="var(--text-dim)" label="NOT CONNECTED" />
+  }
+
+  // Fall back to server-side status
+  if (!status) return <Badge color="var(--text-dim)" label="LOADING…" />
+  if (!status.connected) return <Badge color="var(--text-dim)" label="NOT CONNECTED" />
+  if (status.connected && !status.validated) return <Badge color="var(--amber)" label="SAVED — UNVERIFIED" />
+  if (status.connected && status.validated) {
+    const ts = status.lastValidatedAt
+      ? new Date(status.lastValidatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : null;
+    return <Badge color="var(--green)" label={`CONNECTED${ts ? ` — verified ${ts}` : ""}`} dot />
+  }
+  return <Badge color="var(--text-dim)" label="UNKNOWN" />
+}
+
+function Badge({ color, label, dot }: { color: string; label: string; dot?: boolean }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {dot && (
+        <div style={{
+          width: 6, height: 6, borderRadius: "50%",
+          background: color,
+          boxShadow: `0 0 5px ${color}`,
+        }} />
+      )}
+      <span style={{ fontFamily: "var(--mono)", fontSize: 12, color, letterSpacing: "0.08em", fontWeight: 600 }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────────────────
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
