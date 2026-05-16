@@ -1,3 +1,4 @@
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -400,3 +401,76 @@ td {
 .pnl-positive { color: var(--green); }
 .pnl-negative { color: var(--red); }
 .pnl-zero { color: var(--text-dim); }
+
+/* Colored status badges */
+.badge-green { background: #00e67620; color: var(--green); border: 1px solid #00e67660; padding: 2px 8px; border-radius: 2px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.badge-red   { background: #ff525220; color: var(--red);   border: 1px solid #ff525260; padding: 2px 8px; border-radius: 2px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.badge-amber { background: #ffab4020; color: var(--amber); border: 1px solid #ffab4060; padding: 2px 8px; border-radius: 2px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.badge-cyan  { background: #00bcd420; color: var(--cyan);  border: 1px solid #00bcd460; padding: 2px 8px; border-radius: 2px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.badge-dim   { background: #1a1f29; color: var(--text-dim); border: 1px solid var(--border-dim); padding: 2px 8px; border-radius: 2px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+
+/* Ghost button */
+.btn-cyan { background: #00bcd420; color: var(--cyan); border-color: #00bcd460; }
+.btn-cyan:hover { background: #00bcd440; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-dim);
+}
+.btn-ghost:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-active);
+}
+
+/* Select / textarea alias */
+.select-input { background: var(--bg-base); border: 1px solid var(--border-dim); color: var(--text-primary); padding: 8px 10px; border-radius: 3px; font-family: var(--mono); font-size: 12px; }
+.select-input:focus { outline: none; border-color: var(--cyan); }
+.textarea { min-height: 120px; resize: vertical; }
+
+/* Skeleton shimmer */
+.shimmer {
+  background: linear-gradient(90deg, var(--bg-panel) 0%, var(--bg-elevated) 50%, var(--bg-panel) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+
+/* Active scanner pulse */
+.pulse-green {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse-green 2s ease-in-out infinite;
+  display: inline-block;
+}
+
+/* Scanline overlay */
+.scan-line {
+  position: relative;
+  overflow: hidden;
+}
+.scan-line::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 188, 212, 0.05) 50%,
+    transparent 100%
+  );
+  background-size: 100% 4px;
+  pointer-events: none;
+  opacity: 0.4;
+}
+
+/* Heatmap cells */
+.heat-cell-0 { background: #1a1f29; color: var(--text-dim); }
+.heat-cell-1 { background: #1f2430; color: var(--text-secondary); }
+.heat-cell-2 { background: #2a2010; color: var(--amber); }
+.heat-cell-3 { background: #3a2510; color: #ffb866; }
+.heat-cell-4 { background: #4a2010; color: #ff8c42; }
+.heat-cell-5 { background: #5a1810; color: var(--red); text-shadow: 0 0 6px var(--red-dim); }
+

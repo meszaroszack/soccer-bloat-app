@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { Tab } from "../App";
 
@@ -16,16 +17,27 @@ interface Props {
   onTabChange: (t: Tab) => void;
 }
 
+function nowEt(): string {
+  return new Date().toLocaleTimeString("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 export function TopBar({ activeTab, onTabChange }: Props) {
+  const [tick, setTick] = useState(nowEt());
+  useEffect(() => {
+    const i = setInterval(() => setTick(nowEt()), 1000);
+    return () => clearInterval(i);
+  }, []);
+
   const { data: health } = useQuery({
     queryKey: ["scan-health"],
     queryFn: api.getScanHealth,
     refetchInterval: 8000,
-  });
-  const { data: summary } = useQuery({
-    queryKey: ["analytics-summary"],
-    queryFn: api.getAnalyticsSummary,
-    refetchInterval: 15000,
   });
   const { data: credStatus } = useQuery({
     queryKey: ["cred-status"],
@@ -35,29 +47,17 @@ export function TopBar({ activeTab, onTabChange }: Props) {
   const { data: account } = useQuery({
     queryKey: ["account-summary"],
     queryFn: api.getAccountSummary,
-    // Only poll if we have credentials
     refetchInterval: credStatus?.connected ? 45_000 : false,
     enabled: !!credStatus?.connected,
   });
 
   const hStatus = health?.status ?? "stopped";
-  const dotColor =
-    hStatus === "healthy"
+  const running = health?.running;
+  const dotColor = running
+    ? hStatus === "healthy"
       ? "var(--green)"
-      : hStatus === "degraded" || hStatus === "no_data"
-        ? "var(--amber)"
-        : "var(--red)";
-  const statusLabel =
-    hStatus === "healthy"
-      ? "LIVE"
-      : hStatus === "degraded"
-        ? "DEGRADED"
-        : hStatus === "no_data"
-          ? "NO DATA"
-          : "IDLE";
-  const age = health?.lastScanAgeSeconds;
-  const ageStr =
-    age == null ? "—" : age < 60 ? `${age}s` : `${Math.round(age / 60)}m`;
+      : "var(--amber)"
+    : "var(--text-dim)";
 
   return (
     <header
@@ -101,7 +101,7 @@ export function TopBar({ activeTab, onTabChange }: Props) {
             color: "var(--cyan)",
           }}
         >
-          KALSHI TERMINAL
+          KALSHI SPORTS TERMINAL
         </span>
       </div>
 
@@ -151,39 +151,49 @@ export function TopBar({ activeTab, onTabChange }: Props) {
               height: 6,
               borderRadius: "50%",
               background: dotColor,
-              boxShadow: hStatus === "healthy" ? `0 0 6px ${dotColor}` : "none",
-              animation: hStatus === "healthy" ? "pulse-green 2s ease-in-out infinite" : "none",
+              boxShadow: running ? `0 0 6px ${dotColor}` : "none",
+              animation: running ? "pulse-green 2s ease-in-out infinite" : "none",
             }}
           />
-          <span style={{ color: dotColor, letterSpacing: "0.06em" }}>{statusLabel}</span>
+          <span style={{ color: dotColor, letterSpacing: "0.06em" }}>
+            {running ? "SCAN" : "OFF"}
+          </span>
         </div>
 
         <span style={{ color: "var(--border-active)" }}>|</span>
 
-        {summary && (
-          <>
-            <span style={{ color: "var(--text-dim)" }}>
-              <span style={{ color: "var(--text-secondary)" }}>{summary.eventsTracked}</span> EVT
-            </span>
-            {summary.signalsPending > 0 && (
-              <span style={{ color: "var(--amber)", fontWeight: 700 }}>
-                {summary.signalsPending} PEND
-              </span>
-            )}
-          </>
+        <span style={{ color: "var(--text-dim)" }}>
+          <span style={{ color: "var(--text-secondary)" }}>{health?.normalizedEventCount ?? 0}</span> EVT
+        </span>
+        <span style={{ color: "var(--text-dim)" }}>
+          <span style={{ color: "var(--text-secondary)" }}>{health?.signalCount ?? 0}</span> SIG
+        </span>
+        {health?.errorCount > 0 && (
+          <span style={{ color: "var(--red)", fontWeight: 700 }}>{health.errorCount} ERR</span>
         )}
 
         <div style={{ width: 1, height: 14, background: "var(--border-dim)" }} />
         {credStatus?.connected ? (
           account?.connected ? (
             <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <div style={{
-                width: 5, height: 5, borderRadius: "50%",
-                background: "var(--green)",
-                boxShadow: "0 0 4px var(--green)",
-                flexShrink: 0,
-              }} />
-              <span style={{ fontFamily: "var(--mono)", fontSize: 10, color: "var(--green)", fontWeight: 600 }}>
+              <div
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  background: "var(--green)",
+                  boxShadow: "0 0 4px var(--green)",
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 10,
+                  color: "var(--green)",
+                  fontWeight: 600,
+                }}
+              >
                 ${(account.balanceDollars ?? 0).toFixed(2)}
               </span>
             </div>
@@ -198,11 +208,8 @@ export function TopBar({ activeTab, onTabChange }: Props) {
           </span>
         )}
 
-        {health?.errorCount > 0 && (
-          <span style={{ color: "var(--red)", fontWeight: 700 }}>{health.errorCount} ERR</span>
-        )}
-
-        <span style={{ color: "var(--text-dim)" }}>{ageStr}</span>
+        <div style={{ width: 1, height: 14, background: "var(--border-dim)" }} />
+        <span style={{ color: "var(--text-dim)" }}>{tick} ET</span>
       </div>
     </header>
   );

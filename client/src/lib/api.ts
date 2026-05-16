@@ -9,67 +9,77 @@ async function req<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+const post = (path: string, body?: any) =>
+  req<any>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+const put = (path: string, body?: any) =>
+  req<any>(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+const del = (path: string) => req<any>(path, { method: "DELETE" });
+
 export const api = {
+  // settings
   getSettings: () => req<any>("/api/settings"),
-  updateSettings: (data: any) =>
-    req<any>("/api/settings", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    }),
+  updateSettings: (data: any) => put("/api/settings", data),
 
+  // credentials
   getCredStatus: () => req<any>("/api/credentials/status"),
-  setCredentials: (data: any) =>
-    req<any>("/api/credentials", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data),
-    }),
-  credRefresh: () => req<any>("/api/credentials/refresh", { method: "POST" }),
-  clearCredentials: () => req<any>("/api/credentials", { method: "DELETE" }),
+  setCredentials: (data: any) => post("/api/credentials", data),
+  credRefresh: () => post("/api/credentials/refresh"),
+  clearCredentials: () => del("/api/credentials"),
 
-  getScannerStatus: () => req<any>("/api/scanner/status"),
+  // scanner
   getScanHealth: () => req<any>("/api/scan/health"),
-  triggerScan: () => req<any>("/api/scanner/run", { method: "POST" }),
-
-  getAnalyticsSummary: () => req<any>("/api/analytics/summary"),
-
   getEvents: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
-    return req<any[]>(`/api/events${qs}`);
+    return req<any[]>(`/api/scan/events${qs}`);
   },
   getEvent: (ticker: string) => req<any>(`/api/events/${encodeURIComponent(ticker)}`),
+  triggerScan: () => post("/api/scan/run"),
 
+  // signals
   getSignals: (params?: Record<string, string>) => {
     const qs = params ? "?" + new URLSearchParams(params).toString() : "";
     return req<any[]>(`/api/signals${qs}`);
   },
-  getPendingSignals: () => req<any[]>("/api/signals/pending"),
-  confirmSignal: (id: string) => req<any>(`/api/signals/${id}/confirm`, { method: "POST" }),
-  skipSignal: (id: string) => req<any>(`/api/signals/${id}/skip`, { method: "POST" }),
-  watchSignal: (id: string) => req<any>(`/api/signals/${id}/watch`, { method: "POST" }),
+  skipSignal: (id: string) => post(`/api/signals/${id}/skip`),
+  watchSignal: (id: string) => post(`/api/signals/${id}/watch`),
+  confirmSignal: (id: string) => post(`/api/signals/${id}/confirm`),
 
+  // bot
   getBotStatus: () => req<any>("/api/bot/status"),
+  getBotPending: () => req<any[]>("/api/bot/pending"),
   getBotActions: () => req<any[]>("/api/bot/actions"),
+  botConfirm: (id: string) => post(`/api/bot/confirm/${id}`),
+  botDismiss: (id: string) => post(`/api/bot/dismiss/${id}`),
+  botSettings: (data: any) => post("/api/bot/settings", data),
 
+  // account
   getAccountSummary: () => req<any>("/api/account/summary"),
-  refreshAccount: () => req<any>("/api/account/refresh", { method: "POST" }),
+  refreshAccount: () => post("/api/account/refresh"),
   getPositions: () => req<any>("/api/account/positions"),
+  getTrades: () => req<any>("/api/account/trades"),
 
-  getOpportunities: (date?: string) => {
-    const qs = date ? `?date=${date}` : "";
-    return req<any[]>(`/api/analytics/opportunities${qs}`);
-  },
+  // analytics
   getTopOpportunities: (date?: string) => {
     const qs = date ? `?date=${date}` : "";
     return req<any[]>(`/api/analytics/top-opportunities${qs}`);
   },
-  getOpeningDrift: () => req<any[]>("/api/analytics/opening-drift"),
   getLeagueHeat: () => req<any[]>("/api/analytics/league-heat"),
+  getOpeningDrift: () => req<any[]>("/api/analytics/opening-drift"),
+  getPerformanceSummary: () => req<any>("/api/analytics/performance-summary"),
 
-  getIntelReport: () => req<any>("/api/intelligence/report"),
+  // intelligence
   getDailyReport: () => req<any>("/api/intelligence/daily-report"),
-  refreshIntel: () => req<any>("/api/intelligence/refresh", { method: "POST" }),
+  refreshIntel: () => post("/api/intelligence/refresh"),
 };
 
 export function heatClass(score: number): string {
@@ -86,4 +96,29 @@ export function heatBgClass(score: number): string {
   if (score < 40) return "heat-bg-mid";
   if (score < 70) return "heat-bg-high";
   return "heat-bg-max";
+}
+
+export function heatCell(value: number, max = 100): string {
+  if (max <= 0) return "heat-cell-0";
+  const r = value / max;
+  if (r <= 0) return "heat-cell-0";
+  if (r < 0.2) return "heat-cell-1";
+  if (r < 0.4) return "heat-cell-2";
+  if (r < 0.6) return "heat-cell-3";
+  if (r < 0.8) return "heat-cell-4";
+  return "heat-cell-5";
+}
+
+export function fmtUsd(n: number | undefined | null, withSign = false): string {
+  if (n == null || isNaN(n as number)) return "—";
+  const v = n as number;
+  const sign = withSign && v > 0 ? "+" : "";
+  return `${sign}$${v.toFixed(2)}`;
+}
+
+export function fmtTime(t?: string | Date | null): string {
+  if (!t) return "—";
+  const d = typeof t === "string" ? new Date(t) : t;
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
