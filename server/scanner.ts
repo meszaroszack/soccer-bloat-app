@@ -1,5 +1,6 @@
 import { store } from "./storage";
 import { fetchAllSportsMarkets, buildNormalizedEvent } from "./kalshi";
+import { routeSignal } from "./bot";
 import {
   runBloatNo,
   runLayDraw,
@@ -120,52 +121,61 @@ export async function runScan(): Promise<void> {
         eventList.push(event);
 
         for (const result of stratResults) {
-          if (result.score >= settings.minCompositeScore || result.strategyKey === "open_drift_favorite") {
-            const status =
-              result.strategyKey === "open_drift_favorite"
+          const meetsThreshold =
+            result.score >= settings.minCompositeScore ||
+            result.strategyKey === "open_drift_favorite";
+
+          if (!meetsThreshold) continue;
+
+          // Initial status — bot.routeSignal may upgrade this
+          const initialStatus =
+            result.strategyKey === "open_drift_favorite"
+              ? "observed_only"
+              : compositeScore < settings.minCompositeScore
                 ? "observed_only"
-                : compositeScore < settings.minCompositeScore
-                  ? "observed_only"
-                  : "pending_confirm";
+                : "pending_confirm";
 
-            const sig: Omit<Signal, "id" | "detectedAt"> = {
-              eventTicker: event.eventTicker,
-              strategy: result.strategyKey,
-              sport: event.sport,
-              league: event.league,
-              matchTitle: event.matchup,
-              marketTitle: event.markets[0]?.title ?? event.matchup,
-              sideRecommendation: result.sideRecommendation,
-              favoriteProb: event.favoriteProb,
-              edgePercent: result.edgePercent,
-              bloatScore: result.strategyKey === "bloat_no" ? result.score : 0,
-              perplexityContextScore: pxScore * 10,
-              compositeScore,
-              riskScore: result.riskScore,
-              actionability: result.actionability,
-              heatmapReasons: result.heatmapReasons,
-              status,
-              isAuto: false,
-              ticker: event.markets[0]?.ticker,
-            };
+          const sig: Omit<Signal, "id" | "detectedAt"> = {
+            eventTicker: event.eventTicker,
+            strategy: result.strategyKey,
+            sport: event.sport,
+            league: event.league,
+            matchTitle: event.matchup,
+            marketTitle: event.markets[0]?.title ?? event.matchup,
+            sideRecommendation: result.sideRecommendation,
+            favoriteProb: event.favoriteProb,
+            edgePercent: result.edgePercent,
+            bloatScore: result.strategyKey === "bloat_no" ? result.score : 0,
+            perplexityContextScore: pxScore * 10,
+            compositeScore,
+            riskScore: result.riskScore,
+            actionability: result.actionability,
+            heatmapReasons: result.heatmapReasons,
+            status: initialStatus,
+            isAuto: false,
+            ticker: event.markets[0]?.ticker,
+          };
 
-            const existing = store
-              .getAllSignals()
-              .find(
-                (s) =>
-                  s.eventTicker === event.eventTicker &&
-                  s.strategy === result.strategyKey &&
-                  (s.status === "pending_confirm" ||
-                    s.status === "observed_only" ||
-                    s.status === "active"),
+          // Deduplicate — only create if no active/pending signal already exists
+          const existing = store
+            .getAllSignals()
+            .find(
+              (s) =>
+                s.eventTicker === event.eventTicker &&
+                s.strategy === result.strategyKey &&
+                (s.status === "pending_confirm" ||
+                  s.status === "observed_only" ||
+                  s.status === "active"),
+            );
+
+          if (!existing) {
+            const created = store.createSignal(sig);
+            newSignals++;
+            // Delegate bot routing — handles confirm vs auto-trade logic
+            if (initialStatus === "pending_confirm") {
+              routeSignal(created).catch((e) =>
+                console.error("[scanner] routeSignal error:", e),
               );
-
-            if (!existing) {
-              const created = store.createSignal(sig);
-              newSignals++;
-              if (status === "pending_confirm" && settings.confirmMode) {
-                store.addPendingConfirmation(created);
-              }
             }
           }
         }
