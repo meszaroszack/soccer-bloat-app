@@ -91,6 +91,8 @@ export const api = {
     const qs = status ? `?status=${status}` : "";
     return req<any[]>(`/api/ledger/positions${qs}`);
   },
+  getResolverStatus: () => req<any>("/api/ledger/resolver-status"),
+  getOpenPositions: () => req<any[]>("/api/ledger/open-positions"),
 
   // calibration
   getCalibrationBuckets: () => req<any[]>("/api/calibration/buckets"),

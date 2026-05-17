@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { api, fmtUsd } from "../lib/api";
 
@@ -33,6 +34,25 @@ function pnlColor(v: number | undefined): string {
   return v > 0 ? "var(--green)" : "var(--red)";
 }
 
+function resolverTickColor(ts: string | Date | undefined | null): string {
+  if (!ts) return "var(--red)";
+  const d = typeof ts === "string" ? new Date(ts) : ts;
+  if (!(d instanceof Date) || isNaN(d.getTime())) return "var(--red)";
+  const ageSec = (Date.now() - d.getTime()) / 1000;
+  if (ageSec < 90) return "var(--green)";
+  if (ageSec < 300) return "var(--amber)";
+  return "var(--red)";
+}
+
+function fmtHHMM(t: string | Date | undefined | null): string {
+  if (!t) return "—";
+  const d = typeof t === "string" ? new Date(t) : t;
+  if (!(d instanceof Date) || isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
 const RANK_GLOW: Record<number, string> = {
   1: "var(--green)",
   2: "var(--cyan)",
@@ -56,6 +76,18 @@ export function PicksView() {
     queryKey: ["settings"],
     queryFn: api.getSettings,
   });
+  const { data: resolverStat } = useQuery({
+    queryKey: ["resolver-status"],
+    queryFn: api.getResolverStatus,
+    refetchInterval: 30_000,
+  });
+  const { data: openPositions } = useQuery({
+    queryKey: ["open-positions"],
+    queryFn: api.getOpenPositions,
+    refetchInterval: 30_000,
+  });
+  const [posSort, setPosSort] = useState<"age" | "pnl">("age");
+  const [posSortDir, setPosSortDir] = useState<"desc" | "asc">("desc");
 
   const promote = useMutation({
     mutationFn: () => api.promoteToLive(),
@@ -294,6 +326,24 @@ export function PicksView() {
             value={String(cycle?.rejectedCount ?? 0)}
             color="var(--red)"
           />
+          <HealthRow
+            label="LAST RESOLVER TICK"
+            value={timeAgo(resolverStat?.lastTickAt)}
+            color={resolverTickColor(resolverStat?.lastTickAt)}
+          />
+          <HealthRow
+            label="POSITIONS RESOLVED"
+            value={
+              resolverStat?.positionsResolved != null
+                ? String(resolverStat.positionsResolved)
+                : "—"
+            }
+          />
+          <HealthRow
+            label="RESOLVER ERROR"
+            value={resolverStat?.lastError ? String(resolverStat.lastError) : "none"}
+            color={resolverStat?.lastError ? "var(--red)" : "var(--green)"}
+          />
 
           <div
             style={{
@@ -490,7 +540,218 @@ export function PicksView() {
           </div>
         </div>
       </section>
+
+      {/* OPEN VIRTUAL POSITIONS */}
+      <OpenPositionsSection
+        positions={openPositions}
+        posSort={posSort}
+        posSortDir={posSortDir}
+        onToggleSort={(field) => {
+          if (posSort === field) {
+            setPosSortDir(posSortDir === "desc" ? "asc" : "desc");
+          } else {
+            setPosSort(field);
+            setPosSortDir("desc");
+          }
+        }}
+      />
     </div>
+  );
+}
+
+function OpenPositionsSection({
+  positions,
+  posSort,
+  posSortDir,
+  onToggleSort,
+}: {
+  positions: any[] | undefined;
+  posSort: "age" | "pnl";
+  posSortDir: "desc" | "asc";
+  onToggleSort: (field: "age" | "pnl") => void;
+}) {
+  const list = positions ?? [];
+  const sorted = [...list].sort((a, b) => {
+    const av =
+      posSort === "age" ? (a.ageMins ?? 0) : (a.markToMarketPnlDollars ?? 0);
+    const bv =
+      posSort === "age" ? (b.ageMins ?? 0) : (b.markToMarketPnlDollars ?? 0);
+    return posSortDir === "desc" ? bv - av : av - bv;
+  });
+  const arrow = (field: "age" | "pnl") =>
+    posSort === field ? (posSortDir === "desc" ? " ▼" : " ▲") : "";
+
+  return (
+    <section className="panel" style={{ padding: 18 }}>
+      <h3 className="h-section">
+        OPEN VIRTUAL POSITIONS{" "}
+        <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>
+          ({list.length})
+        </span>
+      </h3>
+      {list.length === 0 ? (
+        <div
+          style={{
+            padding: "28px 0",
+            textAlign: "center",
+            fontFamily: "var(--mono)",
+            fontSize: 12,
+            color: "var(--text-dim)",
+          }}
+        >
+          No open virtual positions yet — next picks cycle will create them
+        </div>
+      ) : (
+        <table
+          style={{
+            width: "100%",
+            fontFamily: "var(--mono)",
+            fontSize: 11,
+            borderCollapse: "collapse",
+          }}
+        >
+          <thead>
+            <tr
+              style={{
+                color: "var(--text-dim)",
+                textAlign: "left",
+                letterSpacing: "0.08em",
+                borderBottom: "1px solid var(--border-dim)",
+              }}
+            >
+              <th style={{ padding: "6px 6px" }}>MATCH</th>
+              <th style={{ padding: "6px 6px" }}>STRATEGY</th>
+              <th style={{ padding: "6px 6px" }}>SIDE</th>
+              <th style={{ padding: "6px 6px", textAlign: "right" }}>
+                ENTRY PRICE
+              </th>
+              <th style={{ padding: "6px 6px", textAlign: "right" }}>
+                CURRENT PRICE
+              </th>
+              <th
+                style={{
+                  padding: "6px 6px",
+                  textAlign: "right",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+                onClick={() => onToggleSort("pnl")}
+              >
+                MTM P&L{arrow("pnl")}
+              </th>
+              <th
+                style={{
+                  padding: "6px 6px",
+                  textAlign: "right",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+                onClick={() => onToggleSort("age")}
+              >
+                AGE{arrow("age")}
+              </th>
+              <th style={{ padding: "6px 6px" }}>EXP. RESOLUTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((pos: any) => {
+              const matchup =
+                pos.matchup && pos.matchup.length > 24
+                  ? pos.matchup.slice(0, 24) + "…"
+                  : pos.matchup ?? "—";
+              const sideColor =
+                pos.side === "yes" ? "var(--green)" : "var(--red)";
+              const mtm = pos.markToMarketPnlDollars;
+              const mtmColor =
+                mtm == null || mtm === 0
+                  ? "var(--text-dim)"
+                  : mtm > 0
+                    ? "var(--green)"
+                    : "var(--red)";
+              return (
+                <tr
+                  key={pos.id}
+                  style={{ borderBottom: "1px dashed var(--border-dim)" }}
+                >
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      color: "var(--text-primary)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {matchup}
+                  </td>
+                  <td style={{ padding: "6px 6px" }}>
+                    <span
+                      className={`badge-${pos.strategy?.startsWith("bloat") ? "bloat" : pos.strategy}`}
+                    >
+                      {pos.strategy}
+                    </span>
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      color: sideColor,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {pos.side === "yes" ? "YES" : "NO"}
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      textAlign: "right",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {(pos.entryPrice * 100).toFixed(0)}¢
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      textAlign: "right",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {pos.currentPrice != null
+                      ? `${(pos.currentPrice * 100).toFixed(0)}¢`
+                      : "—"}
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      textAlign: "right",
+                      color: mtmColor,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {fmtUsd(mtm, true)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      textAlign: "right",
+                      color: "var(--text-secondary)",
+                    }}
+                  >
+                    {pos.ageMins != null ? `${pos.ageMins.toFixed(0)}m` : "?m"}
+                  </td>
+                  <td
+                    style={{
+                      padding: "6px 6px",
+                      color: "var(--text-dim)",
+                    }}
+                  >
+                    {fmtHHMM(pos.expectedResolutionAt)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 

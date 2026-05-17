@@ -20,7 +20,7 @@ import {
 } from "./account";
 import { manualRefresh } from "./perplexity";
 import { getDriftResearchData } from "./openingTracker";
-import { getLedgerSummary } from "./virtualLedger";
+import { getLedgerSummary, resolverStatus } from "./virtualLedger";
 
 const MEM_WARNING =
   "Credentials are stored in server memory and will clear on restart or redeploy.";
@@ -375,6 +375,35 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     if (status === "closed") positions = positions.filter((p) => p.status !== "virtual_open");
     positions.sort((a, b) => b.entryTime.getTime() - a.entryTime.getTime());
     res.json(positions.slice(0, 100));
+  });
+
+  app.get("/api/ledger/resolver-status", (_req, res) => {
+    res.json(resolverStatus);
+  });
+
+  app.get("/api/ledger/open-positions", (_req, res) => {
+    const positions = store
+      .getAllVirtualPositions()
+      .filter((p) => p.status === "virtual_open");
+    const enriched = positions.map((p) => {
+      const event = store.getEvent(p.eventTicker);
+      const market = event?.markets?.[0];
+      const currentPrice = market
+        ? p.side === "yes"
+          ? market.yesPrice
+          : market.noPrice
+        : null;
+      return {
+        ...p,
+        currentPrice,
+        ageMins: (Date.now() - new Date(p.entryTime).getTime()) / 60000,
+        expectedResolutionAt: new Date(
+          new Date(p.entryTime).getTime() + p.maxAgeMins * 60000,
+        ),
+      };
+    });
+    enriched.sort((a, b) => b.ageMins - a.ageMins);
+    res.json(enriched);
   });
 
   // ── Calibration ──────────────────────────────────────────────────────────────

@@ -8,6 +8,24 @@ import type {
   VirtualPosition,
 } from "../shared/types";
 
+interface ResolverStatus {
+  lastTickAt: Date | null;
+  positionsChecked: number;
+  positionsResolved: number;
+  positionsExpired: number;
+  lastError: string | null;
+  totalTicks: number;
+}
+
+export const resolverStatus: ResolverStatus = {
+  lastTickAt: null,
+  positionsChecked: 0,
+  positionsResolved: 0,
+  positionsExpired: 0,
+  lastError: null,
+  totalTicks: 0,
+};
+
 export function createVirtualPositions(
   cycleResult: CycleResult,
   settings: Settings,
@@ -55,11 +73,15 @@ export function startResolverJob(): void {
   resolverStarted = true;
 
   setInterval(() => {
+    let checked = 0;
+    let resolved = 0;
+    let expired = 0;
     try {
       const positions = store.getAllVirtualPositions();
       const now = Date.now();
       for (const pos of positions) {
         if (pos.status !== "virtual_open") continue;
+        checked++;
         const ageMins = (now - pos.entryTime.getTime()) / 60000;
         const event = store.getEvent(pos.eventTicker);
 
@@ -68,6 +90,7 @@ export function startResolverJob(): void {
           pos.exitTime = new Date();
           pos.realizedPnlDollars = 0;
           store.upsertVirtualPosition(pos);
+          expired++;
           console.log(`[ledger] expired ${pos.id} (age=${ageMins.toFixed(1)}m)`);
           continue;
         }
@@ -94,6 +117,7 @@ export function startResolverJob(): void {
           pos.realizedPnlDollars = realizedPnlDollars;
           store.upsertVirtualPosition(pos);
           recordOutcome(pos);
+          resolved++;
           console.log(
             `[ledger] resolved ${pos.id}: ${outcome} P&L=${realizedPnlDollars.toFixed(2)}`,
           );
@@ -105,7 +129,17 @@ export function startResolverJob(): void {
           store.upsertVirtualPosition(pos);
         }
       }
+      resolverStatus.lastTickAt = new Date();
+      resolverStatus.positionsChecked += checked;
+      resolverStatus.positionsResolved += resolved;
+      resolverStatus.positionsExpired += expired;
+      resolverStatus.totalTicks++;
+      resolverStatus.lastError = null;
+      console.log(
+        `[ledger] resolver tick #${resolverStatus.totalTicks}: checked=${checked} resolved=${resolved} expired=${expired}`,
+      );
     } catch (err) {
+      resolverStatus.lastError = String(err);
       console.error("[ledger] resolver error:", err);
     }
   }, 60_000);

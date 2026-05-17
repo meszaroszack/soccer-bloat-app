@@ -298,6 +298,11 @@ export function evaluate(signals: Signal[], settings: Settings): CycleResult {
   // Stage 6 — Diversity enforcement
   eligible.sort((a, b) => b.rankScore - a.rankScore);
 
+  // Cold-start: any strategy with < 30 resolved samples is still cold
+  // Use calibration buckets to check. Proxy: any WorkSignal in eligible set with bucketSampleSize < 30
+  const anyColdStrategy = eligible.some((w) => w.bucketSampleSize < 30);
+  const strategyLimit = anyColdStrategy ? 2 : 1;
+
   const survivors: WorkSignal[] = [];
   const eventSeen = new Set<string>();
   const leagueCount = new Map<string, number>();
@@ -328,13 +333,13 @@ export function evaluate(signals: Signal[], settings: Settings): CycleResult {
       continue;
     }
     const sc = strategyCount.get(sig.strategy) ?? 0;
-    if (sc >= 1 && w.calibratedHitRate <= 0.6) {
+    if (sc >= strategyLimit && w.calibratedHitRate <= 0.6) {
       bumpReason("strategy_limit");
       diversityRejects.push({
         w,
         passed: false,
         failedGate: "strategy_limit",
-        failedGateDetail: `Strategy ${sig.strategy} already picked (hit rate ≤ 60%)`,
+        failedGateDetail: `Strategy ${sig.strategy} already has ${sc} pick(s) (limit=${strategyLimit}, hit rate ≤ 60%)`,
       });
       continue;
     }
