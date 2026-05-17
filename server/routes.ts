@@ -20,6 +20,7 @@ import {
 } from "./account";
 import { manualRefresh } from "./perplexity";
 import { getDriftResearchData } from "./openingTracker";
+import { getLedgerSummary } from "./virtualLedger";
 
 const MEM_WARNING =
   "Credentials are stored in server memory and will clear on restart or redeploy.";
@@ -339,5 +340,64 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     const report = await manualRefresh(events);
     if (!report) return res.status(500).json({ error: "Failed to generate report" });
     res.json({ success: true, report });
+  });
+
+  // ── Picks / Trading Model ────────────────────────────────────────────────────
+  app.get("/api/picks/today", (_req, res) => {
+    const cycle = store.getLatestCycle();
+    res.json(
+      cycle ?? {
+        topPicks: [],
+        totalEvaluated: 0,
+        eligibleCount: 0,
+        rejectedCount: 0,
+        nearMisses: [],
+        rejectionReasons: {},
+        modelHealth: { avgCalibratedHitRate: 0, avgSampleSize: 0, coldStartPct: 0 },
+      },
+    );
+  });
+
+  app.get("/api/picks/cycle-stats", (_req, res) => {
+    res.json({ history: store.getCycleHistory(20) });
+  });
+
+  // ── Virtual Ledger ───────────────────────────────────────────────────────────
+  app.get("/api/ledger/summary", (_req, res) => {
+    const settings = store.getSettings();
+    res.json(getLedgerSummary(settings));
+  });
+
+  app.get("/api/ledger/positions", (req, res) => {
+    const { status } = req.query;
+    let positions = store.getAllVirtualPositions();
+    if (status === "open") positions = positions.filter((p) => p.status === "virtual_open");
+    if (status === "closed") positions = positions.filter((p) => p.status !== "virtual_open");
+    positions.sort((a, b) => b.entryTime.getTime() - a.entryTime.getTime());
+    res.json(positions.slice(0, 100));
+  });
+
+  // ── Calibration ──────────────────────────────────────────────────────────────
+  app.get("/api/calibration/buckets", (_req, res) => {
+    res.json(
+      store.getAllCalibrationBuckets().sort((a, b) => b.sampleSize - a.sampleSize),
+    );
+  });
+
+  app.get("/api/calibration/adjustments", (_req, res) => {
+    res.json(store.getModelAdjustments(50));
+  });
+
+  app.post("/api/calibration/promote", (_req, res) => {
+    const settings = store.getSettings();
+    const summary = getLedgerSummary(settings);
+    if (!summary.promoteReadiness.isReady) {
+      return res.status(400).json({
+        error: "Not ready to promote",
+        missing: summary.promoteReadiness.missingCriteria,
+      });
+    }
+    store.updateSettings({ executionMode: "live_auto" });
+    res.json({ promoted: true, newMode: "live_auto" });
   });
 }

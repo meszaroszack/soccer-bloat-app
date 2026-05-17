@@ -14,6 +14,8 @@ import {
   maybeUpdateDriftFromEvent,
 } from "./openingTracker";
 import { shouldRunDailyReport, generateDailyReport } from "./perplexity";
+import { evaluate } from "./tradingModel";
+import { createVirtualPositions, startResolverJob } from "./virtualLedger";
 import type {
   NormalizedEvent,
   Signal,
@@ -215,6 +217,35 @@ export async function runScan(): Promise<void> {
         .slice(0, 20);
       generateDailyReport(topEvents).catch((err) => addError(`Perplexity error: ${err}`));
     }
+
+    // ── Trading model evaluation ────────────────────────────────────────────────
+    const tmSettings = store.getSettings();
+    if (tmSettings.executionMode !== "off") {
+      try {
+        const allSignals = store.getAllSignals();
+        const cycleResult = evaluate(allSignals, tmSettings);
+        store.saveCycleResult(cycleResult);
+        console.log(
+          `[scanner] model: ${cycleResult.topPicks.length} picks from ${cycleResult.totalEvaluated} signals`,
+        );
+
+        if (cycleResult.topPicks.length > 0) {
+          if (
+            tmSettings.executionMode === "beta_shadow" ||
+            tmSettings.executionMode === "manual_confirm"
+          ) {
+            createVirtualPositions(cycleResult, tmSettings);
+          } else if (tmSettings.executionMode === "live_auto") {
+            createVirtualPositions(cycleResult, tmSettings);
+            // TODO: placeOrders(cycleResult.topPicks) — not yet wired
+          }
+        }
+      } catch (err) {
+        addError(
+          `Trading model error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
   } finally {
     isScanning = false;
   }
@@ -222,6 +253,7 @@ export async function runScan(): Promise<void> {
 
 export function startScanner(): void {
   scannerStatus.running = true;
+  startResolverJob();
 
   const schedule = () => {
     const intervalMs = store.getSettings().scanIntervalSec * 1000;

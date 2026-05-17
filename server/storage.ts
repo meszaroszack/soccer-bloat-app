@@ -7,6 +7,10 @@ import type {
   DailyOpportunity,
   PerplexityDailyReport,
   BotAction,
+  VirtualPosition,
+  CalibrationBucket,
+  CycleResult,
+  ModelAdjustment,
 } from "../shared/types";
 
 interface KalshiCreds {
@@ -58,6 +62,15 @@ const DEFAULT_SETTINGS: Settings = {
   perplexityDailyReportEnabled: true,
   perplexityDailyReportTimeEt: "11:00",
   perplexityWeight: 0.2,
+  executionMode: "beta_shadow",
+  virtualBankroll: 100,
+  perTradeMin: 1,
+  perTradeMax: 5,
+  minNormalizedScore: 70,
+  minLiquidityScore: 0.3,
+  maxRiskScoreGate: 70,
+  topPicksN: 4,
+  maxPositionAgeMins: 240,
   updatedAt: new Date(),
 };
 
@@ -70,6 +83,10 @@ class Store {
   perplexityReports: Map<string, PerplexityDailyReport> = new Map();
   botActions: BotAction[] = [];
   pendingConfirmations: Signal[] = [];
+  virtualPositions: Map<string, VirtualPosition> = new Map();
+  calibrationBuckets: Map<string, CalibrationBucket> = new Map();
+  cycleResults: CycleResult[] = [];
+  modelAdjustments: ModelAdjustment[] = [];
 
   getSettings() {
     return this.settings;
@@ -177,6 +194,49 @@ class Store {
   }
   getPendingConfirmations() {
     return this.pendingConfirmations;
+  }
+
+  // ── Virtual positions ─────────────────────────────────────────────
+  upsertVirtualPosition(p: VirtualPosition) {
+    this.virtualPositions.set(p.id, p);
+  }
+  getVirtualPosition(id: string) {
+    return this.virtualPositions.get(id);
+  }
+  getAllVirtualPositions() {
+    return Array.from(this.virtualPositions.values());
+  }
+
+  // ── Calibration buckets ───────────────────────────────────────────
+  upsertCalibrationBucket(b: CalibrationBucket) {
+    this.calibrationBuckets.set(b.id, b);
+  }
+  getCalibrationBucket(id: string) {
+    return this.calibrationBuckets.get(id);
+  }
+  getAllCalibrationBuckets() {
+    return Array.from(this.calibrationBuckets.values());
+  }
+
+  // ── Cycle results ─────────────────────────────────────────────────
+  saveCycleResult(c: CycleResult) {
+    this.cycleResults.unshift(c);
+    if (this.cycleResults.length > 200) this.cycleResults = this.cycleResults.slice(0, 200);
+  }
+  getLatestCycle() {
+    return this.cycleResults[0];
+  }
+  getCycleHistory(limit = 20) {
+    return this.cycleResults.slice(0, limit);
+  }
+
+  // ── Model adjustments ─────────────────────────────────────────────
+  addModelAdjustment(a: ModelAdjustment) {
+    this.modelAdjustments.unshift(a);
+    if (this.modelAdjustments.length > 500) this.modelAdjustments = this.modelAdjustments.slice(0, 500);
+  }
+  getModelAdjustments(limit = 50) {
+    return this.modelAdjustments.slice(0, limit);
   }
 }
 

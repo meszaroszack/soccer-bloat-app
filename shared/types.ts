@@ -1,4 +1,5 @@
 export type BetMode = "no_only" | "yes_only" | "both";
+export type ExecutionMode = "off" | "beta_shadow" | "manual_confirm" | "live_auto";
 export type SignalStatus =
   | "pending_confirm"
   | "active"
@@ -37,7 +38,169 @@ export interface Settings {
   perplexityDailyReportTimeEt: string;
   perplexityWeight: number;
   oddsApiKey?: string;
+  // Trading model
+  executionMode: ExecutionMode;
+  virtualBankroll: number;
+  perTradeMin: number;
+  perTradeMax: number;
+  minNormalizedScore: number;
+  minLiquidityScore: number;
+  maxRiskScoreGate: number;
+  topPicksN: number;
+  maxPositionAgeMins?: number;
   updatedAt: Date;
+}
+
+export interface RankComponent {
+  key: string;
+  label: string;
+  value: number;
+  contribution: number;
+  weight: number;
+}
+
+export interface TradingDecision {
+  id: string;
+  cycleId: string;
+  signalId: string;
+  eventTicker: string;
+  matchup: string;
+  strategy: string;
+  sport: string;
+  league: string;
+  side: "yes" | "no";
+  recommendation: string;
+  rank: number;
+  rankScore: number;
+  normalizedScore: number;
+  compositeScore: number;
+  edgePercent: number;
+  calibratedHitRate: number;
+  bucketSampleSize: number;
+  isColdStart: boolean;
+  virtualEntryPrice: number;
+  recommendedSizeDollars: number;
+  bankrollFraction: number;
+  expectedValue: number;
+  worstCaseLoss: number;
+  rankComponents: RankComponent[];
+  whyThisPick: string;
+  liquidityScore: number;
+  riskScore: number;
+}
+
+export interface NearMiss {
+  signalId: string;
+  eventTicker: string;
+  matchup: string;
+  strategy: string;
+  rankScore: number;
+  normalizedScore: number;
+  failedGate: string;
+  failedGateDetail?: string;
+}
+
+export interface ModelHealth {
+  avgCalibratedHitRate: number;
+  avgSampleSize: number;
+  coldStartPct: number;
+}
+
+export interface CycleResult {
+  cycleId: string;
+  evaluatedAt: Date;
+  topPicks: TradingDecision[];
+  eligibleCount: number;
+  totalEvaluated: number;
+  rejectedCount: number;
+  rejectionReasons: Record<string, number>;
+  nearMisses: NearMiss[];
+  modelHealth: ModelHealth;
+}
+
+export type VirtualPositionStatus = "virtual_open" | "virtual_closed" | "virtual_expired";
+
+export interface VirtualPosition {
+  id: string;
+  cycleId: string;
+  signalId: string;
+  decisionId: string;
+  eventTicker: string;
+  matchup: string;
+  strategy: string;
+  sport: string;
+  league: string;
+  side: "yes" | "no";
+  entryTime: Date;
+  entryPrice: number;
+  shares: number;
+  sizeDollars: number;
+  status: VirtualPositionStatus;
+  outcome?: "win" | "loss";
+  exitTime?: Date;
+  exitPrice?: number;
+  realizedPnlDollars?: number;
+  markToMarketPnlDollars?: number;
+  maxAgeMins: number;
+  calibratedHitRateAtEntry: number;
+}
+
+export interface CalibrationBucket {
+  id: string;
+  strategy: string;
+  sport: string;
+  scoreBucket: string;
+  edgeBucket: string;
+  liveOrPre: "live" | "pre";
+  hitRate: number;
+  sampleSize: number;
+  totalPnl: number;
+  totalCapitalDeployed: number;
+  lastUpdated: Date;
+  disabled: boolean;
+  disabledReason?: string;
+}
+
+export interface ModelAdjustment {
+  id: string;
+  timestamp: Date;
+  type: string;
+  bucketId?: string;
+  detail: string;
+  beforeValue?: number;
+  afterValue?: number;
+}
+
+export interface PromoteReadiness {
+  resolvedCount: number;
+  requiredResolved: number;
+  hitRate: number;
+  requiredHitRate: number;
+  roi: number;
+  requiredRoi: number;
+  isReady: boolean;
+  missingCriteria: string[];
+}
+
+export interface LedgerSummary {
+  totalOpenPositions: number;
+  totalClosedPositions: number;
+  dailyPnl: number;
+  weeklyPnl: number;
+  monthlyPnl: number;
+  allTimeVirtualPnl: number;
+  overallHitRate: number;
+  overallROI: number;
+  totalCapitalDeployed: number;
+  winCount: number;
+  lossCount: number;
+  avgWinDollars: number;
+  avgLossDollars: number;
+  byStrategy: Record<string, { hitRate: number; count: number; pnl: number }>;
+  bySport: Record<string, { hitRate: number; count: number; pnl: number }>;
+  virtualBankroll: number;
+  startingBankroll: number;
+  promoteReadiness: PromoteReadiness;
 }
 
 export interface NormalizedMarket {
