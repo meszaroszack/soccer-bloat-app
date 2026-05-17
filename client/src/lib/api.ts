@@ -80,6 +80,22 @@ export const api = {
   // intelligence
   getDailyReport: () => req<any>("/api/intelligence/daily-report"),
   refreshIntel: () => post("/api/intelligence/refresh"),
+
+  // picks / trading model
+  getPicksToday: () => req<any>("/api/picks/today"),
+  getCycleStats: () => req<any>("/api/picks/cycle-stats"),
+
+  // ledger
+  getLedgerSummary: () => req<any>("/api/ledger/summary"),
+  getLedgerPositions: (status?: string) => {
+    const qs = status ? `?status=${status}` : "";
+    return req<any[]>(`/api/ledger/positions${qs}`);
+  },
+
+  // calibration
+  getCalibrationBuckets: () => req<any[]>("/api/calibration/buckets"),
+  getCalibrationAdjustments: () => req<any[]>("/api/calibration/adjustments"),
+  promoteToLive: () => post("/api/calibration/promote"),
 };
 
 export function heatClass(score: number): string {

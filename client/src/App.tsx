@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PicksView } from "./pages/PicksView";
 import { LiveMarketsView } from "./pages/LiveMarketsView";
 import { SignalsView } from "./pages/SignalsView";
 import { BotAccountView } from "./pages/BotAccountView";
@@ -12,10 +13,10 @@ const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 8000 } },
 });
 
-export type Tab = "markets" | "signals" | "account" | "analytics" | "intelligence" | "settings";
+export type Tab = "picks" | "markets" | "signals" | "account" | "analytics" | "intelligence" | "settings";
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>("markets");
+  const [tab, setTab] = useState<Tab>("picks");
   return (
     <QueryClientProvider client={qc}>
       <div
@@ -29,6 +30,7 @@ export default function App() {
       >
         <TopBar activeTab={tab} onTabChange={setTab} />
         <main style={{ flex: 1, overflow: "auto" }}>
+          {tab === "picks" && <PicksView />}
           {tab === "markets" && <LiveMarketsView />}
           {tab === "signals" && <SignalsView />}
           {tab === "account" && <BotAccountView />}

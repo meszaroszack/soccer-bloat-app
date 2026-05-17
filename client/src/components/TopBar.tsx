@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import type { Tab } from "../App";
 
 const TABS: Array<{ id: Tab; label: string }> = [
+  { id: "picks", label: "PICKS" },
   { id: "markets", label: "LIVE MARKETS" },
   { id: "signals", label: "SIGNALS" },
   { id: "account", label: "BOT / ACCOUNT" },
@@ -50,6 +51,12 @@ export function TopBar({ activeTab, onTabChange }: Props) {
     refetchInterval: credStatus?.connected ? 45_000 : false,
     enabled: !!credStatus?.connected,
   });
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: api.getSettings,
+    refetchInterval: 30_000,
+  });
+  const execMode: string = settings?.executionMode ?? "off";
 
   const hStatus = health?.status ?? "stopped";
   const running = health?.running;
@@ -106,30 +113,46 @@ export function TopBar({ activeTab, onTabChange }: Props) {
       </div>
 
       <nav style={{ display: "flex", flex: 1 }}>
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => onTabChange(t.id)}
-            style={{
-              height: "100%",
-              padding: "0 14px",
-              background: "none",
-              border: "none",
-              borderBottom:
-                activeTab === t.id ? "2px solid var(--cyan)" : "2px solid transparent",
-              color: activeTab === t.id ? "var(--cyan)" : "var(--text-dim)",
-              fontFamily: "var(--mono)",
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: "0.1em",
-              cursor: "pointer",
-              transition: "color 0.12s",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+        {TABS.map((t) => {
+          const isPicks = t.id === "picks";
+          const picksGlow =
+            isPicks && execMode === "beta_shadow"
+              ? "var(--amber)"
+              : isPicks && execMode === "live_auto"
+                ? "var(--green)"
+                : null;
+          const accentColor =
+            activeTab === t.id
+              ? picksGlow ?? "var(--cyan)"
+              : picksGlow ?? "var(--text-dim)";
+          return (
+            <button
+              key={t.id}
+              onClick={() => onTabChange(t.id)}
+              style={{
+                height: "100%",
+                padding: "0 14px",
+                background: "none",
+                border: "none",
+                borderBottom:
+                  activeTab === t.id
+                    ? `2px solid ${accentColor}`
+                    : "2px solid transparent",
+                color: accentColor,
+                fontFamily: "var(--mono)",
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: "0.1em",
+                cursor: "pointer",
+                transition: "color 0.12s",
+                whiteSpace: "nowrap",
+                textShadow: picksGlow ? `0 0 6px ${picksGlow}66` : undefined,
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </nav>
 
       <div

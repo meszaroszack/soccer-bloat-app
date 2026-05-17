@@ -242,6 +242,41 @@ export function SettingsView() {
         </Row>
       </Section>
 
+      <Section title="Trading Model">
+        <Row label="EXECUTION MODE">
+          <select className="select" style={{ width: 240 }} value={local.executionMode} onChange={(e) => patch({ executionMode: e.target.value })}>
+            <option value="off">OFF — disabled</option>
+            <option value="beta_shadow">BETA SHADOW — virtual trades only</option>
+            <option value="manual_confirm">MANUAL CONFIRM — picks shown, you decide</option>
+            <option value="live_auto">LIVE AUTO — real orders (requires promote)</option>
+          </select>
+        </Row>
+        <Row label="VIRTUAL BANKROLL $">
+          <input className="input" type="number" step="10" style={{ width: 100 }} value={local.virtualBankroll} onChange={(e) => patch({ virtualBankroll: Number(e.target.value) })} />
+        </Row>
+        <Row label="PER TRADE MIN $">
+          <input className="input" type="number" step="0.25" style={{ width: 90 }} value={local.perTradeMin} onChange={(e) => patch({ perTradeMin: Number(e.target.value) })} />
+        </Row>
+        <Row label="PER TRADE MAX $">
+          <input className="input" type="number" step="0.5" style={{ width: 90 }} value={local.perTradeMax} onChange={(e) => patch({ perTradeMax: Number(e.target.value) })} />
+        </Row>
+        <Row label="MIN NORMALIZED SCORE">
+          <input type="range" min={50} max={95} step={1} value={local.minNormalizedScore} onChange={(e) => patch({ minNormalizedScore: Number(e.target.value) })} style={{ width: 200 }} />
+          <span className="mono" style={{ marginLeft: 10 }}>{local.minNormalizedScore}</span>
+        </Row>
+        <Row label="MIN LIQUIDITY SCORE">
+          <input type="range" min={0} max={1} step={0.05} value={local.minLiquidityScore} onChange={(e) => patch({ minLiquidityScore: Number(e.target.value) })} style={{ width: 200 }} />
+          <span className="mono" style={{ marginLeft: 10 }}>{Number(local.minLiquidityScore).toFixed(2)}</span>
+        </Row>
+        <Row label="MAX RISK GATE">
+          <input type="range" min={20} max={100} step={5} value={local.maxRiskScoreGate} onChange={(e) => patch({ maxRiskScoreGate: Number(e.target.value) })} style={{ width: 200 }} />
+          <span className="mono" style={{ marginLeft: 10 }}>{local.maxRiskScoreGate}</span>
+        </Row>
+        <Row label="TOP PICKS PER CYCLE">
+          <input className="input" type="number" min={1} max={10} style={{ width: 70 }} value={local.topPicksN} onChange={(e) => patch({ topPicksN: Number(e.target.value) })} />
+        </Row>
+      </Section>
+
       <Section title="Strategies">
         {STRATEGIES.map((s) => (
           <div
