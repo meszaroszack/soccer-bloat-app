@@ -20,7 +20,12 @@ import {
 } from "./account";
 import { manualRefresh } from "./perplexity";
 import { getDriftResearchData } from "./openingTracker";
-import { getLedgerSummary, resolverStatus } from "./virtualLedger";
+import {
+  getLedgerSummary,
+  getLedgerDeployment,
+  getResolvedPositionsSummary,
+  resolverStatus,
+} from "./virtualLedger";
 
 const MEM_WARNING =
   "Credentials are stored in server memory and will clear on restart or redeploy.";
@@ -404,6 +409,81 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     });
     enriched.sort((a, b) => b.ageMins - a.ageMins);
     res.json(enriched);
+  });
+
+  // Deployment summary (bankroll bar data)
+  app.get("/api/ledger/deployment-summary", (_req, res) => {
+    const settings = store.getSettings();
+    res.json(getLedgerDeployment(settings));
+  });
+
+  // Resolved positions with pagination and summary
+  app.get("/api/ledger/resolved-positions", (req, res) => {
+    const limit = Math.min(Number(req.query.limit ?? 50), 200);
+    const offset = Number(req.query.offset ?? 0);
+    const all = store
+      .getAllVirtualPositions()
+      .filter((p) => p.status === "virtual_closed" || p.status === "virtual_expired");
+    all.sort((a, b) => {
+      const at = a.exitTime ? new Date(a.exitTime).getTime() : 0;
+      const bt = b.exitTime ? new Date(b.exitTime).getTime() : 0;
+      return bt - at;
+    });
+    const page = all.slice(offset, offset + limit);
+    const enriched = page.map((p) => ({
+      ...p,
+      holdMinutes:
+        p.exitTime && p.entryTime
+          ? (new Date(p.exitTime).getTime() - new Date(p.entryTime).getTime()) / 60000
+          : null,
+    }));
+    const summary = getResolvedPositionsSummary(
+      all.filter((p) => p.status === "virtual_closed"),
+    );
+    res.json({ positions: enriched, totalCount: all.length, summary });
+  });
+
+  // By-match aggregation
+  app.get("/api/ledger/by-match", (_req, res) => {
+    const positions = store.getAllVirtualPositions();
+    const matchMap = new Map<
+      string,
+      {
+        eventTicker: string;
+        matchTitle: string;
+        openCount: number;
+        resolvedCount: number;
+        netPnl: number;
+        mtmPnl: number;
+        latestStatus: string;
+      }
+    >();
+    for (const p of positions) {
+      const key = p.eventTicker;
+      const entry =
+        matchMap.get(key) ?? {
+          eventTicker: p.eventTicker,
+          matchTitle: p.matchup,
+          openCount: 0,
+          resolvedCount: 0,
+          netPnl: 0,
+          mtmPnl: 0,
+          latestStatus: p.status,
+        };
+      if (p.status === "virtual_open") {
+        entry.openCount++;
+        entry.mtmPnl += p.markToMarketPnlDollars ?? 0;
+      } else if (p.status === "virtual_closed") {
+        entry.resolvedCount++;
+        entry.netPnl += p.realizedPnlDollars ?? 0;
+      }
+      entry.latestStatus = p.status;
+      matchMap.set(key, entry);
+    }
+    const result = Array.from(matchMap.values()).sort(
+      (a, b) => b.openCount + b.resolvedCount - (a.openCount + a.resolvedCount),
+    );
+    res.json({ matches: result });
   });
 
   // ── Calibration ──────────────────────────────────────────────────────────────

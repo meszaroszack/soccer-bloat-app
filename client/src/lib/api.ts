@@ -93,6 +93,10 @@ export const api = {
   },
   getResolverStatus: () => req<any>("/api/ledger/resolver-status"),
   getOpenPositions: () => req<any[]>("/api/ledger/open-positions"),
+  getDeploymentSummary: () => req<any>("/api/ledger/deployment-summary"),
+  getResolvedPositions: (limit = 50, offset = 0) =>
+    req<any>(`/api/ledger/resolved-positions?limit=${limit}&offset=${offset}`),
+  getByMatch: () => req<any>("/api/ledger/by-match"),
 
   // calibration
   getCalibrationBuckets: () => req<any[]>("/api/calibration/buckets"),

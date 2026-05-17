@@ -280,3 +280,101 @@ export function getLedgerSummary(settings: Settings): LedgerSummary {
     },
   };
 }
+
+export function getLedgerDeployment(settings: Settings): {
+  bankroll: number;
+  deployed: number;
+  available: number;
+  mtmPnl: number;
+  realizedPnl: number;
+  totalPnl: number;
+  openCount: number;
+  resolvedCount: number;
+  expiredCount: number;
+  totalCount: number;
+  profitableOpenCount: number;
+  underwaterOpenCount: number;
+  flatOpenCount: number;
+} {
+  const positions = store.getAllVirtualPositions();
+  const open = positions.filter((p) => p.status === "virtual_open");
+  const closed = positions.filter((p) => p.status === "virtual_closed");
+  const expired = positions.filter((p) => p.status === "virtual_expired");
+
+  const deployed = open.reduce((s, p) => s + p.sizeDollars, 0);
+  const mtmPnl = open.reduce((s, p) => s + (p.markToMarketPnlDollars ?? 0), 0);
+  const realizedPnl = closed.reduce((s, p) => s + (p.realizedPnlDollars ?? 0), 0);
+  const bankroll = settings.virtualBankroll;
+  const available = Math.max(0, bankroll - deployed);
+  const totalPnl = mtmPnl + realizedPnl;
+
+  const profitableOpenCount = open.filter((p) => (p.markToMarketPnlDollars ?? 0) > 0.005).length;
+  const underwaterOpenCount = open.filter((p) => (p.markToMarketPnlDollars ?? 0) < -0.005).length;
+  const flatOpenCount = open.length - profitableOpenCount - underwaterOpenCount;
+
+  return {
+    bankroll,
+    deployed,
+    available,
+    mtmPnl,
+    realizedPnl,
+    totalPnl,
+    openCount: open.length,
+    resolvedCount: closed.length,
+    expiredCount: expired.length,
+    totalCount: positions.length,
+    profitableOpenCount,
+    underwaterOpenCount,
+    flatOpenCount,
+  };
+}
+
+export function getResolvedPositionsSummary(positions: VirtualPosition[]): {
+  wins: number;
+  losses: number;
+  pushes: number;
+  netPnl: number;
+  hitRate: number;
+  avgWin: number;
+  avgLoss: number;
+  avgHoldMinutes: number;
+} {
+  const wins = positions.filter((p) => p.outcome === "win");
+  const losses = positions.filter((p) => p.outcome === "loss");
+  const pushes = positions.filter((p) => p.outcome === "push");
+
+  const netPnl = positions.reduce((s, p) => s + (p.realizedPnlDollars ?? 0), 0);
+  const winCount = wins.length;
+  const lossCount = losses.length;
+  const totalDecided = winCount + lossCount;
+  const hitRate = totalDecided > 0 ? winCount / totalDecided : 0;
+
+  const avgWin =
+    winCount > 0
+      ? wins.reduce((s, p) => s + (p.realizedPnlDollars ?? 0), 0) / winCount
+      : 0;
+  const avgLoss =
+    lossCount > 0
+      ? losses.reduce((s, p) => s + Math.abs(p.realizedPnlDollars ?? 0), 0) / lossCount
+      : 0;
+
+  const posWithHold = positions.filter((p) => p.exitTime && p.entryTime);
+  const avgHoldMinutes =
+    posWithHold.length > 0
+      ? posWithHold.reduce((s, p) => {
+          const holdMs = new Date(p.exitTime!).getTime() - new Date(p.entryTime).getTime();
+          return s + holdMs / 60000;
+        }, 0) / posWithHold.length
+      : 0;
+
+  return {
+    wins: winCount,
+    losses: lossCount,
+    pushes: pushes.length,
+    netPnl,
+    hitRate,
+    avgWin,
+    avgLoss,
+    avgHoldMinutes,
+  };
+}
