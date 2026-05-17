@@ -6,6 +6,7 @@ import type {
   LedgerSummary,
   Settings,
   VirtualPosition,
+  CircuitBreakerRejection,
 } from "../shared/types";
 
 interface ResolverStatus {
@@ -29,11 +30,155 @@ export const resolverStatus: ResolverStatus = {
 export function createVirtualPositions(
   cycleResult: CycleResult,
   settings: Settings,
-): void {
-  const maxAgeMins = settings.maxPositionAgeMins ?? 240;
+): { opened: number; rejected: CircuitBreakerRejection[] } {
+  const {
+    virtualBankroll,
+    maxBankrollDeploymentPercent = 0.25,
+    perMarketCooldownMinutes = 30,
+    recentLossCooldownHours = 24,
+    maxPositionAgeMins = 240,
+    topPicksN = 4,
+  } = settings;
+
+  const allPositions = store.getAllVirtualPositions();
+  const openPositions = allPositions.filter((p) => p.status === "virtual_open");
+  let deployed = openPositions.reduce((s, p) => s + p.sizeDollars, 0);
+  const maxDeployed = virtualBankroll * Math.min(maxBankrollDeploymentPercent, 1.0);
+
+  const openEventTickers = store.getOpenPositionsByEventTicker();
+  const currentOpenCount = openPositions.length;
+
+  if (currentOpenCount >= topPicksN) {
+    const rejections: CircuitBreakerRejection[] = [];
+    for (const pick of cycleResult.topPicks) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: pick.recommendedSizeDollars,
+        rejectionReason: "concurrent_cap_reached",
+        detail: `${currentOpenCount} positions already open (max ${topPicksN})`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      console.log(`[ledger] CIRCUIT BREAKER concurrent_cap_reached: ${pick.matchup}`);
+    }
+    return { opened: 0, rejected: rejections };
+  }
+
+  let opened = 0;
+  let openedThisCycle = 0;
+  const rejections: CircuitBreakerRejection[] = [];
+
   for (const pick of cycleResult.topPicks) {
+    // GATE A: per-cycle cap
+    if (openedThisCycle >= topPicksN) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: pick.recommendedSizeDollars,
+        rejectionReason: "concurrent_cap_reached",
+        detail: `Cycle cap reached (${openedThisCycle}/${topPicksN} this cycle)`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      continue;
+    }
+
+    // GATE B: bankroll cap with 5% per-trade hard ceiling
+    const newSize = Math.min(
+      pick.recommendedSizeDollars,
+      virtualBankroll * 0.05,
+    );
+    if (deployed + newSize > maxDeployed + 0.001) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: newSize,
+        rejectionReason: "bankroll_cap_breached",
+        detail: `Deployed $${deployed.toFixed(2)} + $${newSize.toFixed(2)} > cap $${maxDeployed.toFixed(2)} (${(maxBankrollDeploymentPercent * 100).toFixed(0)}% of $${virtualBankroll})`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      console.log(`[ledger] CIRCUIT BREAKER bankroll_cap_breached: ${pick.matchup}`);
+      continue;
+    }
+
+    // GATE C: per-event uniqueness
+    if (openEventTickers.has(pick.eventTicker)) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: newSize,
+        rejectionReason: "duplicate_event_position",
+        detail: `Event ${pick.eventTicker} already has an open virtual position`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      console.log(`[ledger] CIRCUIT BREAKER duplicate_event_position: ${pick.matchup}`);
+      continue;
+    }
+
+    // GATE D: per-market cooldown
+    if (store.isMarketOnCooldown(pick.eventTicker)) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: newSize,
+        rejectionReason: "per_market_cooldown",
+        detail: `Market ${pick.eventTicker} is on cooldown (${perMarketCooldownMinutes}m after last open/loss)`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      console.log(`[ledger] CIRCUIT BREAKER per_market_cooldown: ${pick.matchup}`);
+      continue;
+    }
+
+    // GATE E: recent loss cooldown
+    const cooldownCutoff = Date.now() - recentLossCooldownHours * 3600000;
+    const recentLoss = allPositions.find(
+      (p) =>
+        p.eventTicker === pick.eventTicker &&
+        p.status === "virtual_closed" &&
+        p.outcome === "loss" &&
+        p.exitTime &&
+        new Date(p.exitTime).getTime() >= cooldownCutoff,
+    );
+    if (recentLoss) {
+      const r = store.addCircuitBreakerRejection({
+        timestamp: new Date(),
+        eventTicker: pick.eventTicker,
+        matchup: pick.matchup,
+        strategy: pick.strategy,
+        side: pick.side,
+        attemptedSizeDollars: newSize,
+        rejectionReason: "recent_loss_cooldown",
+        detail: `Loss on ${pick.eventTicker} within last ${recentLossCooldownHours}h`,
+        cycleId: cycleResult.cycleId,
+      });
+      rejections.push(r);
+      console.log(`[ledger] CIRCUIT BREAKER recent_loss_cooldown: ${pick.matchup}`);
+      continue;
+    }
+
+    // All gates passed
     const entryPrice = Math.max(pick.virtualEntryPrice, 0.01);
-    const shares = pick.recommendedSizeDollars / entryPrice;
+    const clampedSize = Math.min(newSize, virtualBankroll * 0.05);
+    const shares = clampedSize / entryPrice;
     const pos: VirtualPosition = {
       id: randomUUID(),
       cycleId: cycleResult.cycleId,
@@ -48,14 +193,50 @@ export function createVirtualPositions(
       entryTime: new Date(),
       entryPrice,
       shares,
-      sizeDollars: pick.recommendedSizeDollars,
+      sizeDollars: clampedSize,
       status: "virtual_open",
-      maxAgeMins,
+      maxAgeMins: maxPositionAgeMins,
       calibratedHitRateAtEntry: pick.calibratedHitRate,
     };
     store.upsertVirtualPosition(pos);
-    console.log(`[ledger] opened virtual position ${pos.id} for ${pos.matchup}`);
+    openEventTickers.add(pick.eventTicker);
+    store.setMarketCooldown(pick.eventTicker, perMarketCooldownMinutes);
+    deployed += clampedSize;
+    opened++;
+    openedThisCycle++;
+    console.log(
+      `[ledger] opened virtual position ${pos.id} for ${pos.matchup} ($${clampedSize.toFixed(2)}) deployed=${deployed.toFixed(2)}/${maxDeployed.toFixed(2)}`,
+    );
   }
+
+  return { opened, rejected: rejections };
+}
+
+export function forceCleanupAndReset(_settings: Settings): {
+  forceClosed: number;
+  calibrationAbsorbed: number;
+} {
+  console.log("[ledger] FORCE CLEANUP: closing all open positions and resetting ledger");
+
+  const forceClosed = store.forceCloseAllOpenPositions("admin_reset");
+
+  let calibrationAbsorbed = 0;
+  for (const pos of forceClosed) {
+    try {
+      recordOutcome(pos);
+      calibrationAbsorbed++;
+    } catch (e) {
+      console.warn(`[ledger] calibration absorb failed for ${pos.id}:`, e);
+    }
+  }
+
+  store.clearMarketCooldowns();
+
+  console.log(
+    `[ledger] cleanup complete: force-closed=${forceClosed.length} calibration-absorbed=${calibrationAbsorbed}`,
+  );
+
+  return { forceClosed: forceClosed.length, calibrationAbsorbed };
 }
 
 function getCurrentMarketPrice(pos: VirtualPosition): number | undefined {

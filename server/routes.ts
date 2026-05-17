@@ -24,6 +24,7 @@ import {
   getLedgerSummary,
   getLedgerDeployment,
   getResolvedPositionsSummary,
+  forceCleanupAndReset,
   resolverStatus,
 } from "./virtualLedger";
 
@@ -414,7 +415,35 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
   // Deployment summary (bankroll bar data)
   app.get("/api/ledger/deployment-summary", (_req, res) => {
     const settings = store.getSettings();
-    res.json(getLedgerDeployment(settings));
+    const summary = getLedgerDeployment(settings);
+    const recentRejections = store.getCircuitBreakerLog(Date.now() - 120_000, 50);
+    const rejectionCounters: Record<string, number> = {};
+    for (const r of recentRejections) {
+      rejectionCounters[r.rejectionReason] = (rejectionCounters[r.rejectionReason] ?? 0) + 1;
+    }
+    res.json({ ...summary, recentRejectionCounters: rejectionCounters });
+  });
+
+  // Admin reset
+  app.post("/api/ledger/reset", (req, res) => {
+    const { confirm } = (req.body ?? {}) as { confirm?: boolean };
+    if (!confirm) {
+      return res.status(400).json({ error: "Must pass { confirm: true } in body" });
+    }
+    const settings = store.getSettings();
+    const result = forceCleanupAndReset(settings);
+    res.json({
+      success: true,
+      ...result,
+      message: `Ledger reset: ${result.forceClosed} positions force-closed, ${result.calibrationAbsorbed} absorbed into calibration`,
+    });
+  });
+
+  // Circuit breaker log
+  app.get("/api/ledger/circuit-breaker-log", (req, res) => {
+    const since = req.query.since ? Number(req.query.since) : undefined;
+    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    res.json(store.getCircuitBreakerLog(since, limit));
   });
 
   // Resolved positions with pagination and summary
@@ -423,7 +452,12 @@ export async function registerRoutes(_httpServer: Server, app: Express): Promise
     const offset = Number(req.query.offset ?? 0);
     const all = store
       .getAllVirtualPositions()
-      .filter((p) => p.status === "virtual_closed" || p.status === "virtual_expired");
+      .filter(
+        (p) =>
+          p.status === "virtual_closed" ||
+          p.status === "virtual_expired" ||
+          p.status === "force_closed_cleanup",
+      );
     all.sort((a, b) => {
       const at = a.exitTime ? new Date(a.exitTime).getTime() : 0;
       const bt = b.exitTime ? new Date(b.exitTime).getTime() : 0;

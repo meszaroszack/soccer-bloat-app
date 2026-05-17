@@ -234,9 +234,15 @@ export async function runScan(): Promise<void> {
             tmSettings.executionMode === "beta_shadow" ||
             tmSettings.executionMode === "manual_confirm"
           ) {
-            createVirtualPositions(cycleResult, tmSettings);
+            const cvpResult = createVirtualPositions(cycleResult, tmSettings);
+            console.log(
+              `[scanner] ledger: opened=${cvpResult.opened} rejected=${cvpResult.rejected.length}`,
+            );
           } else if (tmSettings.executionMode === "live_auto") {
-            createVirtualPositions(cycleResult, tmSettings);
+            const cvpResult = createVirtualPositions(cycleResult, tmSettings);
+            console.log(
+              `[scanner] ledger: opened=${cvpResult.opened} rejected=${cvpResult.rejected.length}`,
+            );
             // TODO: placeOrders(cycleResult.topPicks) — not yet wired
           }
         }

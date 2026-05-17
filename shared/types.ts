@@ -48,6 +48,11 @@ export interface Settings {
   maxRiskScoreGate: number;
   topPicksN: number;
   maxPositionAgeMins?: number;
+  // Circuit breakers
+  maxBankrollDeploymentPercent: number;
+  perMarketCooldownMinutes: number;
+  recentLossCooldownHours: number;
+  maxPriceDriftCents: number;
   updatedAt: Date;
 }
 
@@ -118,7 +123,20 @@ export interface CycleResult {
   modelHealth: ModelHealth;
 }
 
-export type VirtualPositionStatus = "virtual_open" | "virtual_closed" | "virtual_expired";
+export type VirtualPositionStatus = "virtual_open" | "virtual_closed" | "virtual_expired" | "force_closed_cleanup";
+
+export interface CircuitBreakerRejection {
+  id: string;
+  timestamp: Date;
+  eventTicker: string;
+  matchup: string;
+  strategy: string;
+  side: "yes" | "no";
+  attemptedSizeDollars: number;
+  rejectionReason: string;
+  detail: string;
+  cycleId: string;
+}
 
 export interface VirtualPosition {
   id: string;

@@ -11,6 +11,7 @@ import type {
   CalibrationBucket,
   CycleResult,
   ModelAdjustment,
+  CircuitBreakerRejection,
 } from "../shared/types";
 
 interface KalshiCreds {
@@ -71,6 +72,10 @@ const DEFAULT_SETTINGS: Settings = {
   maxRiskScoreGate: 70,
   topPicksN: 4,
   maxPositionAgeMins: 240,
+  maxBankrollDeploymentPercent: 0.25,
+  perMarketCooldownMinutes: 30,
+  recentLossCooldownHours: 24,
+  maxPriceDriftCents: 10,
   updatedAt: new Date(),
 };
 
@@ -87,6 +92,8 @@ class Store {
   calibrationBuckets: Map<string, CalibrationBucket> = new Map();
   cycleResults: CycleResult[] = [];
   modelAdjustments: ModelAdjustment[] = [];
+  circuitBreakerLog: CircuitBreakerRejection[] = [];
+  marketCooldownIndex: Map<string, number> = new Map();
 
   getSettings() {
     return this.settings;
@@ -237,6 +244,78 @@ class Store {
   }
   getModelAdjustments(limit = 50) {
     return this.modelAdjustments.slice(0, limit);
+  }
+
+  // ── Circuit breaker log ───────────────────────────────────────────
+  addCircuitBreakerRejection(r: Omit<CircuitBreakerRejection, "id">) {
+    const entry: CircuitBreakerRejection = { ...r, id: randomUUID() };
+    this.circuitBreakerLog.unshift(entry);
+    if (this.circuitBreakerLog.length > 500) this.circuitBreakerLog = this.circuitBreakerLog.slice(0, 500);
+    return entry;
+  }
+  getCircuitBreakerLog(since?: number, limit = 100): CircuitBreakerRejection[] {
+    let log = this.circuitBreakerLog;
+    if (since) log = log.filter((r) => r.timestamp.getTime() >= since);
+    return log.slice(0, limit);
+  }
+
+  // ── Market cooldown index ─────────────────────────────────────────
+  setMarketCooldown(marketTicker: string, cooldownMins: number) {
+    this.marketCooldownIndex.set(marketTicker, Date.now() + cooldownMins * 60000);
+  }
+  isMarketOnCooldown(marketTicker: string): boolean {
+    const expiry = this.marketCooldownIndex.get(marketTicker);
+    if (!expiry) return false;
+    if (Date.now() >= expiry) {
+      this.marketCooldownIndex.delete(marketTicker);
+      return false;
+    }
+    return true;
+  }
+  clearMarketCooldowns() {
+    this.marketCooldownIndex.clear();
+  }
+
+  // ── Open position indexes ─────────────────────────────────────────
+  getOpenPositionsByMarketTicker(): Map<string, VirtualPosition[]> {
+    const idx = new Map<string, VirtualPosition[]>();
+    for (const pos of this.virtualPositions.values()) {
+      if (pos.status !== "virtual_open") continue;
+      const arr = idx.get(pos.eventTicker) ?? [];
+      arr.push(pos);
+      idx.set(pos.eventTicker, arr);
+    }
+    return idx;
+  }
+  getOpenPositionsByEventTicker(): Set<string> {
+    const s = new Set<string>();
+    for (const pos of this.virtualPositions.values()) {
+      if (pos.status === "virtual_open") s.add(pos.eventTicker);
+    }
+    return s;
+  }
+  getOpenPositionCount(): number {
+    let n = 0;
+    for (const pos of this.virtualPositions.values()) {
+      if (pos.status === "virtual_open") n++;
+    }
+    return n;
+  }
+
+  // ── Force-close all open positions (cleanup) ─────────────────────
+  forceCloseAllOpenPositions(reason: string): VirtualPosition[] {
+    const closed: VirtualPosition[] = [];
+    for (const pos of this.virtualPositions.values()) {
+      if (pos.status !== "virtual_open") continue;
+      pos.status = "force_closed_cleanup";
+      pos.exitTime = new Date();
+      pos.realizedPnlDollars = pos.markToMarketPnlDollars ?? 0;
+      pos.outcome = (pos.markToMarketPnlDollars ?? 0) >= 0 ? "win" : "loss";
+      this.virtualPositions.set(pos.id, pos);
+      closed.push(pos);
+    }
+    console.log(`[storage] force-closed ${closed.length} positions: ${reason}`);
+    return closed;
   }
 }
 
