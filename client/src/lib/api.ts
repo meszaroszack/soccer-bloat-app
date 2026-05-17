@@ -97,6 +97,11 @@ export const api = {
   getResolvedPositions: (limit = 50, offset = 0) =>
     req<any>(`/api/ledger/resolved-positions?limit=${limit}&offset=${offset}`),
   getByMatch: () => req<any>("/api/ledger/by-match"),
+  resetLedger: () => post("/api/ledger/reset", { confirm: true }),
+  getCircuitBreakerLog: (since?: number) => {
+    const qs = since ? `?since=${since}` : "";
+    return req<any[]>(`/api/ledger/circuit-breaker-log${qs}`);
+  },
 
   // calibration
   getCalibrationBuckets: () => req<any[]>("/api/calibration/buckets"),

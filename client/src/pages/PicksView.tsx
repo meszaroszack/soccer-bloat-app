@@ -101,6 +101,11 @@ export function PicksView() {
     queryFn: api.getByMatch,
     refetchInterval: 60_000,
   });
+  const { data: circuitLog } = useQuery({
+    queryKey: ["circuit-breaker-log"],
+    queryFn: () => api.getCircuitBreakerLog(Date.now() - 24 * 3600_000),
+    refetchInterval: 30_000,
+  });
 
   const [posSort, setPosSort] = useState<"age" | "pnl">("pnl");
   const [posSortDir, setPosSortDir] = useState<"desc" | "asc">("desc");
@@ -187,6 +192,75 @@ export function PicksView() {
         />
       </div>
 
+      {/* WARNING BANNER — only renders when conditions met */}
+      {deployment && (() => {
+        const bk = deployment.bankroll;
+        const dep = deployment.deployed;
+        const mtm = deployment.mtmPnl ?? 0;
+
+        const breachBankroll = dep > bk;
+        const heavyDeploy = dep > bk * 0.75;
+        const sigLoss = mtm < -(bk * 0.20);
+
+        if (!breachBankroll && !heavyDeploy && !sigLoss) return null;
+
+        const isCritical = breachBankroll;
+        const borderColor = isCritical ? "var(--red)" : "var(--amber)";
+        const bgColor = isCritical ? "rgba(255,82,82,0.08)" : "rgba(255,171,64,0.07)";
+
+        return (
+          <div
+            style={{
+              background: bgColor,
+              border: `2px solid ${borderColor}`,
+              borderRadius: 6,
+              padding: "12px 18px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              animation: isCritical ? "pulse-green 1.5s infinite" : undefined,
+            }}
+          >
+            {breachBankroll && (
+              <div
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--red)",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                ⚠ BANKROLL BREACH — circuit breaker active — deployed ${dep.toFixed(2)} exceeds bankroll ${bk.toFixed(2)}
+              </div>
+            )}
+            {!breachBankroll && heavyDeploy && (
+              <div
+                style={{
+                  fontFamily: "var(--mono)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--amber)",
+                  letterSpacing: "0.08em",
+                }}
+              >
+                ⚠ BANKROLL HEAVILY DEPLOYED — ${dep.toFixed(2)} / ${bk.toFixed(2)} ({(dep / bk * 100).toFixed(0)}%)
+              </div>
+            )}
+            {sigLoss && (
+              <div style={{ fontFamily: "var(--mono)", fontSize: 12, color: "var(--amber)" }}>
+                Significant unrealized losses: ${mtm.toFixed(2)} MtM ({(mtm / bk * 100).toFixed(1)}% of bankroll)
+              </div>
+            )}
+            {isCritical && (
+              <div style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-dim)" }}>
+                No new positions will open until deployed &lt; {(bk * 0.25).toFixed(2)} (25% cap). Use the reset endpoint to force-close all and restore a clean state.
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* DEPLOYMENT STRIP */}
       <DeploymentStrip deployment={deployment} settings={settings} />
 
@@ -249,6 +323,151 @@ export function PicksView() {
         expanded={byMatchExpanded}
         setExpanded={setByMatchExpanded}
       />
+
+      {/* CIRCUIT BREAKER REJECTIONS */}
+      <section className="panel" style={{ padding: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+          <h3 className="h-section" style={{ margin: 0 }}>CIRCUIT BREAKER REJECTIONS</h3>
+          <span
+            style={{
+              fontFamily: "var(--mono)",
+              fontSize: 11,
+              color: "var(--red)",
+              fontWeight: 700,
+            }}
+          >
+            (last 24h: {(circuitLog ?? []).length})
+          </span>
+        </div>
+
+        {(!circuitLog || circuitLog.length === 0) ? (
+          <div
+            style={{
+              padding: "16px 0",
+              fontFamily: "var(--mono)",
+              fontSize: 12,
+              color: "var(--text-dim)",
+            }}
+          >
+            No circuit breaker rejections in the last 24h — system is operating within limits.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table
+              style={{
+                width: "100%",
+                fontFamily: "var(--mono)",
+                fontSize: 11,
+                borderCollapse: "collapse",
+                minWidth: 600,
+              }}
+            >
+              <thead>
+                <tr
+                  style={{
+                    color: "var(--text-dim)",
+                    textAlign: "left",
+                    letterSpacing: "0.07em",
+                    borderBottom: "1px solid var(--border-dim)",
+                  }}
+                >
+                  <th style={{ padding: "5px 8px" }}>TIME</th>
+                  <th style={{ padding: "5px 8px" }}>MATCH</th>
+                  <th style={{ padding: "5px 8px" }}>STRATEGY</th>
+                  <th style={{ padding: "5px 8px" }}>SIDE</th>
+                  <th style={{ padding: "5px 8px", textAlign: "right" }}>SIZE</th>
+                  <th style={{ padding: "5px 8px" }}>REASON</th>
+                  <th style={{ padding: "5px 8px" }}>DETAIL</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(circuitLog ?? []).slice(0, 50).map((r: any) => (
+                  <tr key={r.id} style={{ borderBottom: "1px dashed var(--border-dim)" }}>
+                    <td
+                      style={{
+                        padding: "5px 8px",
+                        color: "var(--text-dim)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {new Date(r.timestamp).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 8px",
+                        color: "var(--text-primary)",
+                        maxWidth: 180,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {r.matchup}
+                    </td>
+                    <td style={{ padding: "5px 8px", color: "var(--text-secondary)" }}>
+                      {r.strategy}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 8px",
+                        color: r.side === "yes" ? "var(--green)" : "var(--red)",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {r.side?.toUpperCase()}
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 8px",
+                        textAlign: "right",
+                        color: "var(--cyan)",
+                      }}
+                    >
+                      {r.attemptedSizeDollars != null
+                        ? `$${r.attemptedSizeDollars.toFixed(2)}`
+                        : "—"}
+                    </td>
+                    <td style={{ padding: "5px 8px" }}>
+                      <span
+                        style={{
+                          fontFamily: "var(--mono)",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color:
+                            r.rejectionReason === "bankroll_cap_breached" ||
+                            r.rejectionReason === "duplicate_event_position" ||
+                            r.rejectionReason === "duplicate_market_position"
+                              ? "var(--red)"
+                              : "var(--amber)",
+                          letterSpacing: "0.06em",
+                        }}
+                      >
+                        {r.rejectionReason}
+                      </span>
+                    </td>
+                    <td
+                      style={{
+                        padding: "5px 8px",
+                        color: "var(--text-dim)",
+                        fontSize: 10,
+                        maxWidth: 200,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {r.detail}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {/* MIDDLE ROW: NEAR MISSES + MODEL HEALTH */}
       <div
@@ -729,6 +948,28 @@ function DeploymentStrip({
             : "—"}
         </span>
       </div>
+
+      {deployment?.recentRejectionCounters &&
+        Object.keys(deployment.recentRejectionCounters).length > 0 && (
+          <div
+            style={{
+              marginTop: 6,
+              marginBottom: 6,
+              fontFamily: "var(--mono)",
+              fontSize: 10,
+              color: "var(--text-dim)",
+            }}
+          >
+            Circuit breakers this cycle:{" "}
+            {Object.entries(
+              deployment.recentRejectionCounters as Record<string, number>,
+            ).map(([k, v]) => (
+              <span key={k} style={{ color: "var(--amber)", marginRight: 12 }}>
+                {k}={v}
+              </span>
+            ))}
+          </div>
+        )}
 
       {renderBar()}
 
